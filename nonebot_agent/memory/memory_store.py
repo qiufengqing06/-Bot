@@ -6,6 +6,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, List, Optional
 
+from nonebot.log import logger
 from sqlalchemy.orm import Session
 
 from nonebot_agent.memory.memory_deduper import MemoryDeduper
@@ -30,6 +31,63 @@ class StructuredMemoryStore:
         self.chroma = chroma
         self.writer = writer or MemoryWriter()
         self.deduper = deduper or MemoryDeduper()
+        self._llm_client = None
+
+    def _get_llm_client(self):
+        """Lazy initialize OpenAI client for contradiction detection."""
+        if self._llm_client is None:
+            try:
+                from openai import OpenAI
+                from nonebot_agent.config import config
+                self._llm_client = OpenAI(
+                    api_key=config.LLM_API_KEY,
+                    base_url=config.LLM_API_URL,
+                )
+            except Exception as exc:
+                logger.warning(f"[MemoryStore] Failed to initialize LLM client: {exc}")
+                self._llm_client = None
+        return self._llm_client
+
+    def _check_contradiction(self, old_content: str, new_content: str) -> bool:
+        """
+        Check if new content contradicts old content.
+        
+        Uses LLM to detect contradictions, with keyword fallback.
+        Returns True if new contradicts old (should replace).
+        """
+        # Keyword-based fallback: negation words in new but not in old
+        negation_words = ["不", "没", "戒", "放弃", "改", "不再", "停止"]
+        has_negation_in_new = any(word in new_content for word in negation_words)
+        has_negation_in_old = any(word in old_content for word in negation_words)
+        
+        if has_negation_in_new and not has_negation_in_old:
+            # New contains negation, old doesn't - likely a change/contradiction
+            return True
+
+        # Try LLM-based contradiction detection
+        client = self._get_llm_client()
+        if client is None:
+            return False
+
+        from nonebot_agent.config import config
+        
+        prompt = f"这两条关于用户的信息是否矛盾？\nold: '{old_content}'\nnew: '{new_content}'\n回答YES或NO"
+
+        try:
+            result = client.chat.completions.create(
+                model=config.LLM_MODEL,
+                messages=[
+                    {"role": "system", "content": "你是一个判断信息是否矛盾的助手，只回答YES或NO。"},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.1,
+                max_tokens=10,
+            )
+            answer = (result.choices[0].message.content or "").strip().upper()
+            return "YES" in answer
+        except Exception as exc:
+            logger.debug(f"[MemoryStore] Contradiction check failed: {exc}")
+            return False
 
     def write_candidates(
         self,
@@ -62,13 +120,20 @@ class StructuredMemoryStore:
         ).first()
 
         if record:
-            should_replace = not self.deduper.is_near_duplicate(
-                record.normalized_content, normalized, threshold=0.90
-            ) or len(normalized) > len(record.normalized_content)
+            # Check if new content contradicts old content
+            is_contradiction = self._check_contradiction(record.content, candidate.text)
+            
+            should_replace = is_contradiction or (
+                not self.deduper.is_near_duplicate(
+                    record.normalized_content, normalized, threshold=0.90
+                ) or len(normalized) > len(record.normalized_content)
+            )
             record.last_seen_at = now
             record.source_mode = source_mode or record.source_mode
             record.source_group_id = group_id or record.source_group_id
             if should_replace:
+                if is_contradiction:
+                    logger.info(f"[MemoryStore] Contradiction detected: '{record.content}' -> '{candidate.text}'")
                 self._delete_chroma(record.chroma_id)
                 record.content = candidate.text
                 record.normalized_content = normalized
