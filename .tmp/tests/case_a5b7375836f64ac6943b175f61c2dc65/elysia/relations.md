@@ -1,1 +1,0 @@
-Kevin is an important companion and co-leader in this reference.
