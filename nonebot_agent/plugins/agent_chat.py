@@ -189,7 +189,13 @@ async def record_group_message(bot: Bot, event: MessageEvent):
     if random.randint(1, 100) > reply_probability:
         logger.debug(f"[trace:{trace_id}] [Agent] Free chat: skipped reply (prob={reply_probability}%)")
         return
-    
+
+    # Random silent chance: even when probability hits, sometimes stay quiet
+    silent_chance = getattr(config, "FREE_CHAT_SILENT_CHANCE", 0.1)
+    if random.random() < silent_chance:
+        logger.debug(f"[trace:{trace_id}] [Agent] Free chat: random silent (chance={silent_chance})")
+        return
+
     logger.info(f"[trace:{trace_id}] [Agent] Free chat mode: replying to {user_id} in {group_id}")
     
     # Generate response using agent (chat mode for free chat)
@@ -207,6 +213,11 @@ async def record_group_message(bot: Bot, event: MessageEvent):
             current_user_nickname=nickname,
             trace_id=trace_id
         )
+
+        # Check if bot chose to stay silent
+        if response_plan.is_silent:
+            logger.info(f"[trace:{trace_id}] [Agent] Free chat: bot chose to stay silent")
+            return
 
         await response_sender.send_plan(
             plan=response_plan,
@@ -313,6 +324,11 @@ async def handle_agent_message(bot: Bot, event: MessageEvent):
             skill_exclusive=skill_exclusive,
             trace_id=trace_id
         )
+
+        # Check if bot chose to stay silent
+        if response_plan.is_silent:
+            logger.info(f"[trace:{trace_id}] [Agent] Bot chose to stay silent")
+            return
 
         await response_sender.send_plan(
             plan=response_plan,

@@ -147,6 +147,11 @@ async def generate_response(
     if image_description:
         logger.info(f"{trace_prefix}[Agent] Image description extracted: {image_description[:80]}...")
 
+    # Handle silent responses: don't save to memory, don't update emotion
+    if response_plan.is_silent:
+        logger.info(f"{trace_prefix}[Agent] Silent response — skipping memory save and emotion update")
+        return response_plan
+
     full_response = response_plan.canonical_text().strip()
     if not full_response:
         full_response = "\n".join(

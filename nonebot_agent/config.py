@@ -266,6 +266,7 @@ class Config:
     # Free Chat Mode Settings (群聊自由聊天模式)
     # ===========================================
     FREE_CHAT_DEFAULT_PROBABILITY = 30  # 默认回复概率 (0-100)
+    FREE_CHAT_SILENT_CHANCE = float(os.getenv("FREE_CHAT_SILENT_CHANCE", "0.1"))  # 即使概率命中，也有10%概率保持沉默
     
     # ===========================================
     # Bot Master Settings (主人设置)
