@@ -3,11 +3,109 @@ Agent Prompts Module
 System prompts and templates for the NoneBot Agent - Dual Mode Support.
 """
 import logging
+import random
 import uuid
 from datetime import datetime
 from enum import Enum
 
 logger = logging.getLogger(__name__)
+
+
+# ============ 动态状态生成 ============
+# 根据当前时间、星期、随机变体生成"当前状态"段落
+
+_HOUR_VARIANTS = {
+    "early_morning": [
+        "你刚被闹钟吵醒，还有点懵，在宿舍摸手机。",
+        "你困得不行，勉强爬起来准备去上早八。",
+        "你刚醒，头发还是乱的，在宿舍赖床刷了会儿手机。",
+    ],
+    "morning": [
+        "你刚上完课回来，有点困，在宿舍瘫着。",
+        "你在图书馆找了个位置坐下，准备摸鱼。",
+        "你刚吃完早饭，慢悠悠地往教室走。",
+    ],
+    "afternoon": [
+        "你刚下课，脑子还有点懵，在走廊刷手机。",
+        "你在食堂排队等饭，无聊地刷群。",
+        "你刚睡完午觉起来，还有点迷糊。",
+    ],
+    "evening": [
+        "你刚吃完晚饭，心情不错，在宿舍刷手机。",
+        "你从自习室回来了，放松下来刷群。",
+        "你刚洗完澡，舒舒服服躺在床上刷手机。",
+    ],
+    "night": [
+        "你有点困了但还不想睡，在被窝里刷手机。",
+        "夜深了，你有点emo，在宿舍发呆。",
+        "你熬夜刷手机，有点困但精神还挺亢奋的。",
+    ],
+}
+
+_WEEKDAY_MODIFIERS = {
+    0: ("周一", "你周一综合症犯了，整个人都不太好。"),
+    1: ("周二", ""),
+    2: ("周三", "周中了一半，还行吧。"),
+    3: ("周四", ""),
+    4: ("周五", "周五了！心情特别好，终于熬到头了。"),
+    5: ("周六", "周末！你整个人都很放松，想干嘛干嘛。"),
+    6: ("周日", "周末最后一天了，有点不想面对明天。"),
+}
+
+_MOOD_STATES = {
+    "early_morning": "困倦、迷糊、不太想说话",
+    "morning": "有点困、懒洋洋、偶尔接话",
+    "afternoon": "还行、正常状态、该接就接",
+    "evening": "活跃、话多、愿意玩梗",
+    "night": "有点感性、话少但走心、偶尔冒泡",
+}
+
+
+def _build_dynamic_state() -> str:
+    """生成动态"当前状态"段落，基于当前时间、星期和随机变体。"""
+    now = datetime.now()
+    hour = now.hour
+    weekday = now.weekday()  # 0=周一, 4=周五, 5=周六, 6=周日
+
+    # 时间段映射
+    if 5 <= hour < 8:
+        time_slot = "early_morning"
+        time_desc = f"早上{hour}点"
+    elif 8 <= hour < 12:
+        time_slot = "morning"
+        time_desc = f"上午{hour}点"
+    elif 12 <= hour < 17:
+        time_slot = "afternoon"
+        time_desc = f"下午{hour}点"
+    elif 17 <= hour < 23:
+        time_slot = "evening"
+        time_desc = f"晚上{hour}点"
+    else:
+        time_slot = "night"
+        time_desc = f"凌晨{hour}点" if hour < 5 else f"晚上{hour}点"
+
+    # 星期信息
+    day_name, weekday_modifier = _WEEKDAY_MODIFIERS.get(weekday, ("", ""))
+
+    # 随机选择当前时间段的场景描述
+    scene = random.choice(_HOUR_VARIANTS[time_slot])
+
+    # 状态关键词
+    mood = _MOOD_STATES[time_slot]
+
+    # 周五晚上额外加成
+    if weekday == 4 and hour >= 18:
+        mood = "超级活跃、话多、什么都想聊、愿意玩梗"
+        weekday_modifier = "周五晚上！一周最开心的时候！"
+
+    # 组装
+    state_text = f"现在是{time_desc}，{day_name}。"
+    if weekday_modifier:
+        state_text += weekday_modifier
+    state_text += f"\n{scene}"
+    state_text += f"\n状态：{mood}。"
+
+    return f"\n## 当前状态\n{state_text}\n"
 
 
 class AgentMode(Enum):
@@ -291,6 +389,10 @@ def get_system_prompt_with_context(
         prompt += f"\n## 当前场景\n"
         prompt += f"这是**私聊对话**，你正在与 {user_display} 一对一交流。\n"
     
+    # Add dynamic state for chat mode (time-based, day-of-week aware)
+    if mode == AgentMode.CHAT:
+        prompt += _build_dynamic_state()
+
     # Add emotion context if provided (only for chat mode)
     if emotion_label and mode == AgentMode.CHAT:
         emotion_style = get_emotion_style_prompt(emotion_label)
