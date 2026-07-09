@@ -32,9 +32,19 @@ class ChatResponsePlan:
     reply_mode: str = "single"
     bubbles: List[ChatBubble] = field(default_factory=list)
 
+    @property
+    def is_silent(self) -> bool:
+        """True when the bot chose not to respond (no bubbles to send)."""
+        if self.reply_mode == "silent":
+            return True
+        return len(self.bubbles) == 0
+
     @classmethod
     def from_text(cls, text: str) -> "ChatResponsePlan":
-        cleaned = text.strip() or "..."
+        cleaned = text.strip()
+        if not cleaned:
+            # Empty/whitespace response → silent (bot chose not to speak)
+            return cls(reply_mode="silent", bubbles=[])
         return cls(
             reply_mode="single",
             bubbles=[ChatBubble(kind=_detect_bubble_kind(cleaned), content=cleaned, role="primary")],
@@ -55,7 +65,7 @@ class ChatResponsePlan:
             bubbles.append(ChatBubble(kind=kind, content=cleaned, role=role, optional=optional))
 
         if not bubbles:
-            return cls.from_text("...")
+            return cls(reply_mode="silent", bubbles=[])
 
         reply_mode = "followup" if sum(1 for bubble in bubbles if bubble.kind == "text") > 1 else "single"
         return cls(reply_mode=reply_mode, bubbles=bubbles)
@@ -197,7 +207,7 @@ def normalize_chat_response_plan(
         text_count += 1
 
     if not normalized:
-        return ChatResponsePlan.from_text("...")
+        return ChatResponsePlan(reply_mode="silent", bubbles=[])
 
     reply_mode = "followup" if sum(1 for bubble in normalized if bubble.kind == "text") > 1 else "single"
     return ChatResponsePlan(reply_mode=reply_mode, bubbles=normalized)
@@ -215,9 +225,16 @@ def _plan_from_dict(payload: dict[str, Any]) -> ChatResponsePlan:
         if bubble is not None:
             bubbles.append(bubble)
 
+    # If bubbles array is empty, check for reply_mode="silent" or fallback to silent
     if not bubbles:
+        if reply_mode == "silent":
+            return ChatResponsePlan(reply_mode="silent", bubbles=[])
+        # Check for content/reply fields as fallback
         fallback = payload.get("content") or payload.get("reply") or ""
-        return ChatResponsePlan.from_text(str(fallback))
+        fallback = str(fallback).strip()
+        if not fallback:
+            return ChatResponsePlan(reply_mode="silent", bubbles=[])
+        return ChatResponsePlan.from_text(fallback)
 
     return ChatResponsePlan(reply_mode=reply_mode, bubbles=bubbles)
 
