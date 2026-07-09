@@ -82,6 +82,7 @@ class MemoryManager:
         self.fact_top_k = config.MEMORY_FACT_TOP_K
         self.event_top_k = config.MEMORY_EVENT_TOP_K
         self.structured_tables_ready = self._ensure_structured_memory_tables()
+        self._seen_memories = set()  # Dedupe set for memory formatting
 
     def _ensure_structured_memory_tables(self) -> bool:
         """
@@ -370,6 +371,7 @@ class MemoryManager:
         query: str,
         mode: Optional[str] = None,
         group_id: Optional[str] = None,
+        user_nickname: Optional[str] = None,
     ) -> str:
         """
         Retrieve relevant long-term memories and format as context.
@@ -379,10 +381,14 @@ class MemoryManager:
             query: Current query to search relevant memories
             mode: Optional mode filter
             k: Number of memories to retrieve
+            user_nickname: Optional user nickname for personalized header
             
         Returns:
             Formatted context string
         """
+        # Clear dedupe set for this context retrieval
+        self._seen_memories.clear()
+        
         sections = []
 
         summary = self.summary_manager.get_summary(db, conversation.id, mode or "professional")
@@ -393,27 +399,48 @@ class MemoryManager:
         if not self.chroma_available:
             return "\n".join(sections)
 
+        # Check for memory recall trigger
+        is_recall_query = self.writer.detect_memory_recall_trigger(query)
+        fact_limit = self.fact_top_k * 2 if is_recall_query else self.fact_top_k
+        event_limit = self.event_top_k * 2 if is_recall_query else self.event_top_k
+
         try:
             facts = self.store.search_facts(
                 user_id,
                 query,
-                self.fact_top_k,
+                fact_limit,
                 source_mode=mode,
             )
-            facts_text = self._format_memories_as_context(facts, "[相关用户事实:]", limit=self.fact_top_k)
+            facts_text = self._format_memories_as_context(
+                facts,
+                "[相关用户事实:]",
+                limit=fact_limit,
+                user_nickname=user_nickname,
+            )
             if facts_text:
                 sections.append(facts_text)
 
             events = self.store.search_events(
                 user_id,
                 query,
-                self.event_top_k,
+                event_limit,
                 group_id=group_id,
                 source_mode=mode,
             )
-            events_text = self._format_memories_as_context(events, "[相关用户经历与近况:]", limit=self.event_top_k)
+            events_text = self._format_memories_as_context(
+                events,
+                "[相关用户经历与近况:]",
+                limit=event_limit,
+                user_nickname=user_nickname,
+            )
             if events_text:
                 sections.append(events_text)
+                
+            # Add special context for memory recall queries
+            if is_recall_query and (facts_text or events_text):
+                recall_prefix = "用户正在问你关于他们自己的记忆。请自然地回忆和提及你记得的关于他们的事情，像是朋友间的聊天一样。\n\n"
+                sections.insert(0, recall_prefix)
+                
         except Exception as exc:
             logger.warning(f"[Memory] Chroma search failed in get_long_term_context: {exc}")
 
@@ -427,6 +454,7 @@ class MemoryManager:
         group_id: str,
         query: str,
         mode: Optional[str] = None,
+        user_nickname: Optional[str] = None,
     ) -> str:
         """
         Retrieve relevant long-term memories for a group and format as context.
@@ -436,10 +464,14 @@ class MemoryManager:
             query: Current query to search relevant memories
             mode: Optional mode filter
             k: Number of memories to retrieve
+            user_nickname: Optional user nickname for personalized header
             
         Returns:
             Formatted context string
         """
+        # Clear dedupe set for this context retrieval
+        self._seen_memories.clear()
+        
         sections = []
 
         summary = self.summary_manager.get_summary(db, conversation.id, mode or "professional")
@@ -450,27 +482,48 @@ class MemoryManager:
         if not self.chroma_available:
             return "\n".join(sections)
 
+        # Check for memory recall trigger
+        is_recall_query = self.writer.detect_memory_recall_trigger(query)
+        fact_limit = self.fact_top_k * 2 if is_recall_query else self.fact_top_k
+        event_limit = self.event_top_k * 2 if is_recall_query else self.event_top_k
+
         try:
             facts = self.store.search_facts(
                 user_id,
                 query,
-                self.fact_top_k,
+                fact_limit,
                 source_mode=mode,
             )
-            facts_text = self._format_memories_as_context(facts, "[当前用户相关事实:]", limit=self.fact_top_k)
+            facts_text = self._format_memories_as_context(
+                facts,
+                "[当前用户相关事实:]",
+                limit=fact_limit,
+                user_nickname=user_nickname,
+            )
             if facts_text:
                 sections.append(facts_text)
 
             events = self.store.search_events(
                 user_id,
                 query,
-                self.event_top_k,
+                event_limit,
                 group_id=group_id,
                 source_mode=mode,
             )
-            events_text = self._format_memories_as_context(events, "[当前用户在本群相关经历:]", limit=self.event_top_k)
+            events_text = self._format_memories_as_context(
+                events,
+                "[当前用户在本群相关经历:]",
+                limit=event_limit,
+                user_nickname=user_nickname,
+            )
             if events_text:
                 sections.append(events_text)
+                
+            # Add special context for memory recall queries
+            if is_recall_query and (facts_text or events_text):
+                recall_prefix = "用户正在问你关于他们自己的记忆。请自然地回忆和提及你记得的关于他们的事情，像是朋友间的聊天一样。\n\n"
+                sections.insert(0, recall_prefix)
+                
         except Exception as exc:
             logger.warning(f"[Memory] Chroma search failed in get_group_long_term_context: {exc}")
 
@@ -484,28 +537,127 @@ class MemoryManager:
             cleaned = cleaned.replace("用户问:", "用户曾提到:", 1).strip()
         return cleaned
 
-    def _format_memories_as_context(self, memories: List[Document], title: str, limit: Optional[int] = None) -> str:
-        """Format retrieved memories with dedupe so the prompt sees facts instead of repeats."""
+    def _format_memories_as_context(
+        self,
+        memories: List[Document],
+        title: str,
+        limit: Optional[int] = None,
+        user_nickname: Optional[str] = None,
+    ) -> str:
+        """
+        Format retrieved memories with structured sections and time context.
+        
+        Groups memories by category, adds time context for older memories,
+        and provides usage guidance for natural reference.
+        """
         if not memories:
             return ""
 
-        context_parts = [title]
-        seen = set()
-        collected = 0
-
+        # Group memories by category
+        categorized = {}
         for mem in memories:
+            category = mem.metadata.get("category", "其他")
+            if category not in categorized:
+                categorized[category] = []
+            
             cleaned = self._sanitize_memory_content(mem.page_content)
             normalized = self.writer.normalize_text(cleaned)
-            if not cleaned or normalized in seen:
+            if not cleaned or normalized in self._seen_memories:
                 continue
-            seen.add(normalized)
-            timestamp = mem.metadata.get("timestamp", "Unknown time")
-            context_parts.append(f"- ({timestamp}) {cleaned}")
-            collected += 1
-            if limit and collected >= limit:
-                break
+            self._seen_memories.add(normalized)
+            
+            # Add time context
+            timestamp = mem.metadata.get("timestamp", "")
+            time_context = self._format_time_context(timestamp)
+            
+            categorized[category].append((cleaned, time_context))
 
-        return "\n".join(context_parts) if len(context_parts) > 1 else ""
+        if not categorized:
+            return ""
+
+        # Build structured output
+        context_parts = []
+        
+        # Header with user nickname
+        if user_nickname:
+            context_parts.append(f"## 关于{user_nickname}的记忆")
+        else:
+            context_parts.append(title)
+
+        # Category sections
+        category_names = {
+            "profile": "基本身份",
+            "preference": "偏好习惯",
+            "status": "近况动态",
+            "event": "经历事件",
+        }
+
+        for category, items in categorized.items():
+            if not items:
+                continue
+            
+            section_name = category_names.get(category, category)
+            context_parts.append(f"\n### {section_name}")
+            
+            for content, time_context in items[:limit or len(items)]:
+                if time_context:
+                    context_parts.append(f"- {content}{time_context}")
+                else:
+                    context_parts.append(f"- {content}")
+
+        # Usage guidance
+        if user_nickname:
+            context_parts.append(f"\n以上是对{user_nickname}的记忆。在回复中自然地引用这些信息，但不要说'根据我的记忆'之类的机械表达。")
+        else:
+            context_parts.append("\n以上是关于用户的记忆。在回复中自然地引用这些信息，但不要说'根据我的记忆'之类的机械表达。")
+
+        return "\n".join(context_parts)
+
+    def _format_time_context(self, timestamp: str) -> str:
+        """Format timestamp as relative time context like '（3天前）'."""
+        if not timestamp or timestamp == "Unknown time":
+            return ""
+        
+        try:
+            # Try to parse timestamp
+            from datetime import datetime
+            if isinstance(timestamp, str):
+                # Try common formats
+                for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"]:
+                    try:
+                        mem_time = datetime.strptime(timestamp, fmt)
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    return ""
+            else:
+                return ""
+            
+            # Calculate time difference
+            now = datetime.utcnow()
+            delta = now - mem_time
+            
+            if delta.days == 0:
+                if delta.seconds < 3600:
+                    return "（刚才）"
+                else:
+                    return "（今天）"
+            elif delta.days == 1:
+                return "（昨天）"
+            elif delta.days < 7:
+                return f"（{delta.days}天前）"
+            elif delta.days < 30:
+                weeks = delta.days // 7
+                return f"（{weeks}周前）"
+            elif delta.days < 365:
+                months = delta.days // 30
+                return f"（{months}个月前）"
+            else:
+                years = delta.days // 365
+                return f"（{years}年前）"
+        except Exception:
+            return ""
     
     def save_to_long_term(
         self,
