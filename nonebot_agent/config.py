@@ -218,6 +218,7 @@ class Config:
     MEMORY_EVENT_TOP_K = 6
     MEMORY_SUMMARY_TRIGGER_MESSAGES = 6
     MEMORY_SUMMARY_SOURCE_LIMIT = 12
+    MEMORY_EXTRACTION_ENABLED = os.getenv("MEMORY_EXTRACTION_ENABLED", "true").lower() == "true"
     
     # ===========================================
     # Other LLM Settings
