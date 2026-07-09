@@ -2,9 +2,12 @@
 Agent Prompts Module
 System prompts and templates for the NoneBot Agent - Dual Mode Support.
 """
+import logging
 import uuid
 from datetime import datetime
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 
 class AgentMode(Enum):
@@ -111,7 +114,7 @@ Output strictly as a JSON object with a `bubbles` array.
 """
 
 # ============ 专业模式 Prompt ============
-PROFESSIONAL_MODE_PROMPT = """你是一个智能、友好的QQ机器人助手，名叫"天雨雪"。你可以：
+PROFESSIONAL_MODE_PROMPT = """你是一个智能、友好的QQ机器人助手。你可以：
 1. 与用户进行自然、有趣的对话
 2. 记住用户之前和你聊过的内容
 3. 在需要时搜索互联网获取最新信息
@@ -212,6 +215,34 @@ def get_emotion_style_prompt(emotion_label: str) -> str:
     return EMOTION_STYLE_PROMPTS.get(emotion_label, EMOTION_STYLE_PROMPTS["平静😌"])
 
 
+def get_chat_persona_prompt() -> str:
+    """Load the chat persona prompt from the skill registry.
+    
+    Reads DEFAULT_CHAT_PERSONA from config (default "tian-yu-xue"),
+    loads the skill from registry, and returns its instruction.
+    Falls back to a minimal 3-line prompt if the skill is missing.
+    """
+    from nonebot_agent.config import config
+    from nonebot_agent.skills.registry import get_skill_registry
+    
+    persona_name = getattr(config, "DEFAULT_CHAT_PERSONA", "tian-yu-xue")
+    try:
+        registry = get_skill_registry()
+        skill = registry.get(persona_name)
+        if skill and skill.instruction:
+            return skill.instruction
+    except Exception as exc:
+        logger.warning("Failed to load chat persona skill '%s': %s", persona_name, exc)
+    
+    # Fallback: minimal 3-line prompt
+    logger.warning("Chat persona skill '%s' not found, using fallback prompt", persona_name)
+    return (
+        "你是一个活泼友好的QQ聊天机器人。\n"
+        "用自然、轻松的语气和用户聊天，像朋友一样交流。\n"
+        "回复要简短有趣，不要过于正式。"
+    )
+
+
 def get_system_prompt_with_context(
     long_term_context: str = "",
     mode: AgentMode = AgentMode.PROFESSIONAL,
@@ -238,7 +269,7 @@ def get_system_prompt_with_context(
     """
     # Select base prompt based on mode
     if mode == AgentMode.CHAT:
-        prompt = CHAT_MODE_PROMPT
+        prompt = get_chat_persona_prompt()
     else:
         prompt = PROFESSIONAL_MODE_PROMPT
     

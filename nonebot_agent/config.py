@@ -260,6 +260,7 @@ class Config:
     SKILLS_REQUIRE_MASTER_CONFIRM_HIGH_RISK = (
         os.getenv("SKILLS_REQUIRE_MASTER_CONFIRM_HIGH_RISK", "true").lower() == "true"
     )
+    DEFAULT_CHAT_PERSONA = os.getenv("DEFAULT_CHAT_PERSONA", "tian-yu-xue")
     
     # ===========================================
     # Free Chat Mode Settings (群聊自由聊天模式)
