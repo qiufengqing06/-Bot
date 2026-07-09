@@ -6,6 +6,7 @@ from contextlib import contextmanager
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
+from nonebot.log import logger
 
 from nonebot_agent.config import config
 
@@ -70,4 +71,4 @@ def init_db():
         ConversationSummary,
     )  # Import models to register them
     Base.metadata.create_all(bind=engine)
-    print("Database tables created successfully.")
+    logger.info("Database tables created successfully.")

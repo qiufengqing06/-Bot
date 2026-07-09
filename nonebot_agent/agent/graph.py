@@ -17,6 +17,8 @@ from langchain_core.messages import (
 )
 from langgraph.graph import StateGraph, START, END
 
+from nonebot.log import logger
+
 from nonebot_agent.config import config
 from nonebot_agent.agent.chat_output import ChatResponsePlan, parse_chat_response_plan
 from nonebot_agent.agent.prompts import (
@@ -121,7 +123,7 @@ def analyze_image_with_vision_model(
     })
     
     try:
-        print(f"[Vision] Analyzing image with {config.VISION_MODEL}...")
+        logger.debug(f"[Vision] Analyzing image with {config.VISION_MODEL}...")
         response = vision_client.chat.completions.create(
             model=config.VISION_MODEL,
             messages=[{
@@ -132,11 +134,11 @@ def analyze_image_with_vision_model(
         )
         
         description = response.choices[0].message.content
-        print(f"[Vision] Image description: {description[:100]}...")
+        logger.info(f"[Vision] Image description: {description[:100]}...")
         return description
         
     except Exception as e:
-        print(f"[Vision] Error analyzing image: {e}")
+        logger.error(f"[Vision] Error analyzing image: {e}")
         return f"[图片分析失败: {str(e)}]"
 
 
@@ -163,23 +165,23 @@ def build_multimodal_content(
     # Prefer URLs over local paths (DashScope works better with URLs)
     if image_urls:
         for url in image_urls:
-            print(f"[DEBUG] Using image URL: {url[:80]}...")
+            logger.debug(f"[DEBUG] Using image URL: {url[:80]}...")
             content_parts.append({
                 "type": "image_url",
                 "image_url": {"url": url}
             })
     elif image_paths:
         for path in image_paths:
-            print(f"[DEBUG] Converting image to base64: {path}")
+            logger.debug(f"[DEBUG] Converting image to base64: {path}")
             base64_uri = image_to_base64(path)
             if base64_uri:
-                print(f"[DEBUG] Base64 image ready, length={len(base64_uri)}")
+                logger.debug(f"[DEBUG] Base64 image ready, length={len(base64_uri)}")
                 content_parts.append({
                     "type": "image_url",
                     "image_url": {"url": base64_uri}
                 })
             else:
-                print(f"[DEBUG] Failed to convert image: {path}")
+                logger.warning(f"[DEBUG] Failed to convert image: {path}")
     
     # Add text
     if text:
@@ -220,7 +222,7 @@ def convert_messages_to_openai_format(
         if isinstance(msg, HumanMessage):
             last_human_idx = i
     
-    print(f"[DEBUG] Converting {len(messages)} messages, image_urls={image_urls}, image_paths={image_paths}, last_human_idx={last_human_idx}")
+    logger.debug(f"[DEBUG] Converting {len(messages)} messages, image_urls={image_urls}, image_paths={image_paths}, last_human_idx={last_human_idx}")
     
     for i, msg in enumerate(messages):
         if isinstance(msg, SystemMessage):
@@ -233,7 +235,7 @@ def convert_messages_to_openai_format(
             has_images = image_urls or image_paths
             if i == last_human_idx and has_images:
                 num_images = len(image_urls) if image_urls else len(image_paths)
-                print(f"[DEBUG] Attaching {num_images} images to message at index {i}")
+                logger.debug(f"[DEBUG] Attaching {num_images} images to message at index {i}")
                 # Multimodal message with images (prefer URLs)
                 openai_messages.append({
                     "role": "user",
@@ -412,7 +414,7 @@ def create_agent(mode: AgentMode = AgentMode.PROFESSIONAL):
         
         if has_images and not config.IS_MULTIMODAL_MODEL:
             # Text-only LLM: use vision model to analyze image first
-            print(f"[Agent] Using two-stage processing (text-only LLM)")
+            logger.info(f"[Agent] Using two-stage processing (text-only LLM)")
             image_description = analyze_image_with_vision_model(image_paths, image_urls)
             
             if image_description:
@@ -427,7 +429,7 @@ def create_agent(mode: AgentMode = AgentMode.PROFESSIONAL):
         else:
             # Multimodal LLM: send images directly
             if has_images:
-                print(f"[Agent] Using direct multimodal processing")
+                logger.info(f"[Agent] Using direct multimodal processing")
             openai_messages = convert_messages_to_openai_format(all_messages, image_paths, image_urls)
         
         # Call LLM with anti-caching and anti-repetition settings
@@ -491,7 +493,7 @@ def create_agent(mode: AgentMode = AgentMode.PROFESSIONAL):
             
             # Handle Gemini 3 thought_signature error: retry without tools
             if "thought_signature" in error_str or "INVALID_ARGUMENT" in error_str:
-                print(f"[Agent] Gemini thought_signature error detected, retrying without tools...")
+                logger.warning(f"[Agent] Gemini thought_signature error detected, retrying without tools...")
                 try:
                     # Build provider-specific parameters for retry
                     provider = get_provider()
@@ -520,12 +522,12 @@ def create_agent(mode: AgentMode = AgentMode.PROFESSIONAL):
                         "image_description": image_description if has_images and not config.IS_MULTIMODAL_MODEL else state.get("image_description")
                     }
                 except Exception as retry_e:
-                    print(f"[Agent] Retry also failed: {retry_e}")
+                    logger.error(f"[Agent] Retry also failed: {retry_e}")
             
             # Fallback error message
             import traceback
             error_detail = traceback.format_exc()
-            print(f"[Agent] LLM call error: {error_detail}")
+            logger.error(f"[Agent] LLM call error: {error_detail}")
             return {
                 "messages": [AIMessage(content=f"调用模型时出错，请稍后再试。")],
                 "llm_calls": state.get("llm_calls", 0) + 1
