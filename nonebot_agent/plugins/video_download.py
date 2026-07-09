@@ -126,6 +126,44 @@ def detect_bilibili_card(raw_message: str) -> Optional[Dict]:
     return None
 
 
+def detect_bilibili_url(text: str) -> Optional[str]:
+    """
+    Detect direct Bilibili URLs in plain text.
+    
+    Patterns:
+    - Full BV URLs: https://www.bilibili.com/video/BVxxx
+    - Short links: https://b23.tv/xxx
+    
+    Args:
+        text: Message text content
+        
+    Returns:
+        The matched URL if found, None otherwise
+    """
+    if not text:
+        return None
+    
+    # Pattern for full BV URLs
+    bv_pattern = re.compile(r'https?://(?:www\.)?bilibili\.com/video/BV[a-zA-Z0-9]+/?')
+    match = bv_pattern.search(text)
+    if match:
+        url = match.group(0)
+        if _safe_video_url(url):
+            logger.info(f"[VideoDownload] Detected Bilibili BV URL: {url}")
+            return url
+    
+    # Pattern for short links
+    short_pattern = re.compile(r'https?://b23\.tv/[a-zA-Z0-9]+/?')
+    match = short_pattern.search(text)
+    if match:
+        url = match.group(0)
+        if _safe_video_url(url):
+            logger.info(f"[VideoDownload] Detected Bilibili short link: {url}")
+            return url
+    
+    return None
+
+
 # ============ Async Download Wrappers ============
 
 async def download_douyin_video(share_text: str) -> Dict:
@@ -267,9 +305,10 @@ async def handle_video_link(bot: Bot, event: MessageEvent):
     # Try to detect video links
     douyin_text = detect_douyin_link(text_content)
     bilibili_card = detect_bilibili_card(raw_message)
+    bilibili_url = detect_bilibili_url(text_content)
     
     # No video link detected, let message pass through to agent
-    if not douyin_text and not bilibili_card:
+    if not douyin_text and not bilibili_card and not bilibili_url:
         logger.debug("[VideoDownload] No video link detected, passing to next handler")
         return  # Just return, don't block, agent_chat will handle it
     
@@ -292,6 +331,9 @@ async def handle_video_link(bot: Bot, event: MessageEvent):
         elif bilibili_card:
             platform = "B站"
             result = await download_bilibili_video(bilibili_card["url"])
+        elif bilibili_url:
+            platform = "B站"
+            result = await download_bilibili_video(bilibili_url)
         
         if result and result.get("status") == "success":
             file_path = result.get("file_path")
