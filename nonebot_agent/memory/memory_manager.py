@@ -57,8 +57,23 @@ class MemoryManager:
         Args:
             chroma_memory: Optional ChromaMemory instance (creates one if not provided)
         """
-        self.chroma = chroma_memory or ChromaMemory()
+        # Try to initialize Chroma; fall back to MySQL-only if it fails.
+        self.chroma_available = True
+        self._chroma_init_error: Optional[str] = None
+        if chroma_memory is not None:
+            self.chroma = chroma_memory
+        else:
+            try:
+                self.chroma = ChromaMemory()
+            except Exception as exc:
+                self.chroma = None
+                self.chroma_available = False
+                self._chroma_init_error = str(exc)
+                logger.warning(
+                    f"[Memory] ChromaDB unavailable, falling back to MySQL-only memory: {exc}"
+                )
         self.writer = MemoryWriter()
+        # StructuredMemoryStore needs a chroma handle; pass None when degraded.
         self.store = StructuredMemoryStore(self.chroma, self.writer)
         self.summary_manager = MemorySummaryManager(self.writer)
         self.short_term_size = config.SHORT_TERM_MEMORY_SIZE
@@ -374,26 +389,33 @@ class MemoryManager:
         if summary and summary.summary:
             sections.append(f"[近期会话摘要:]\n- {summary.summary}")
 
-        facts = self.store.search_facts(
-            user_id,
-            query,
-            self.fact_top_k,
-            source_mode=mode,
-        )
-        facts_text = self._format_memories_as_context(facts, "[相关用户事实:]", limit=self.fact_top_k)
-        if facts_text:
-            sections.append(facts_text)
+        # Skip Chroma-based retrieval if Chroma is unavailable
+        if not self.chroma_available:
+            return "\n".join(sections)
 
-        events = self.store.search_events(
-            user_id,
-            query,
-            self.event_top_k,
-            group_id=group_id,
-            source_mode=mode,
-        )
-        events_text = self._format_memories_as_context(events, "[相关用户经历与近况:]", limit=self.event_top_k)
-        if events_text:
-            sections.append(events_text)
+        try:
+            facts = self.store.search_facts(
+                user_id,
+                query,
+                self.fact_top_k,
+                source_mode=mode,
+            )
+            facts_text = self._format_memories_as_context(facts, "[相关用户事实:]", limit=self.fact_top_k)
+            if facts_text:
+                sections.append(facts_text)
+
+            events = self.store.search_events(
+                user_id,
+                query,
+                self.event_top_k,
+                group_id=group_id,
+                source_mode=mode,
+            )
+            events_text = self._format_memories_as_context(events, "[相关用户经历与近况:]", limit=self.event_top_k)
+            if events_text:
+                sections.append(events_text)
+        except Exception as exc:
+            logger.warning(f"[Memory] Chroma search failed in get_long_term_context: {exc}")
 
         return "\n".join(sections)
     
@@ -424,26 +446,33 @@ class MemoryManager:
         if summary and summary.summary:
             sections.append(f"[本群近期对话摘要:]\n- {summary.summary}")
 
-        facts = self.store.search_facts(
-            user_id,
-            query,
-            self.fact_top_k,
-            source_mode=mode,
-        )
-        facts_text = self._format_memories_as_context(facts, "[当前用户相关事实:]", limit=self.fact_top_k)
-        if facts_text:
-            sections.append(facts_text)
+        # Skip Chroma-based retrieval if Chroma is unavailable
+        if not self.chroma_available:
+            return "\n".join(sections)
 
-        events = self.store.search_events(
-            user_id,
-            query,
-            self.event_top_k,
-            group_id=group_id,
-            source_mode=mode,
-        )
-        events_text = self._format_memories_as_context(events, "[当前用户在本群相关经历:]", limit=self.event_top_k)
-        if events_text:
-            sections.append(events_text)
+        try:
+            facts = self.store.search_facts(
+                user_id,
+                query,
+                self.fact_top_k,
+                source_mode=mode,
+            )
+            facts_text = self._format_memories_as_context(facts, "[当前用户相关事实:]", limit=self.fact_top_k)
+            if facts_text:
+                sections.append(facts_text)
+
+            events = self.store.search_events(
+                user_id,
+                query,
+                self.event_top_k,
+                group_id=group_id,
+                source_mode=mode,
+            )
+            events_text = self._format_memories_as_context(events, "[当前用户在本群相关经历:]", limit=self.event_top_k)
+            if events_text:
+                sections.append(events_text)
+        except Exception as exc:
+            logger.warning(f"[Memory] Chroma search failed in get_group_long_term_context: {exc}")
 
         return "\n".join(sections)
 
@@ -499,13 +528,21 @@ class MemoryManager:
         Returns:
             Memory ID
         """
-        return self.chroma.add_memory(
-            user_id=user_id,
-            content=content,
-            mode=mode,
-            group_id=group_id,
-            metadata={"category": category}
-        )
+        if not self.chroma_available:
+            logger.debug("[Memory] Chroma unavailable, skipping long-term save")
+            return ""
+        
+        try:
+            return self.chroma.add_memory(
+                user_id=user_id,
+                content=content,
+                mode=mode,
+                group_id=group_id,
+                metadata={"category": category}
+            )
+        except Exception as exc:
+            logger.warning(f"[Memory] Failed to save to Chroma: {exc}")
+            return ""
     
     def save_conversation_summary(
         self,
@@ -537,13 +574,21 @@ class MemoryManager:
             return ""
 
         try:
-            self.store.write_candidates(
-                db=db,
-                user_id=user_id,
-                candidates=candidates,
-                group_id=group_id,
-                source_mode=mode,
-            )
+            # If Chroma is unavailable, only write to MySQL (skip vector embeddings)
+            if not self.chroma_available:
+                for candidate in candidates:
+                    if candidate.memory_type == "fact":
+                        self._write_fact_mysql_only(db, user_id, candidate, group_id=group_id, source_mode=mode)
+                    else:
+                        self._write_event_mysql_only(db, user_id, candidate, group_id=group_id, source_mode=mode)
+            else:
+                self.store.write_candidates(
+                    db=db,
+                    user_id=user_id,
+                    candidates=candidates,
+                    group_id=group_id,
+                    source_mode=mode,
+                )
         except (ProgrammingError, OperationalError) as exc:
             if _is_missing_table_error(exc):
                 db.rollback()
@@ -552,6 +597,93 @@ class MemoryManager:
                 return ""
             raise
         return ",".join(candidate.text for candidate in candidates)
+    
+    def _write_fact_mysql_only(
+        self,
+        db: Session,
+        user_id: str,
+        candidate,
+        group_id: Optional[str] = None,
+        source_mode: Optional[str] = None,
+    ):
+        """Write fact to MySQL only (no Chroma)."""
+        from nonebot_agent.models import MemoryFact
+        from datetime import datetime
+        normalized = self.writer.normalize_text(candidate.text)
+        now = datetime.utcnow()
+        fact_key = candidate.slot_key or candidate.category
+        record = db.query(MemoryFact).filter(
+            MemoryFact.user_id == user_id,
+            MemoryFact.fact_key == fact_key,
+        ).first()
+
+        if record:
+            should_replace = not self.deduper.is_near_duplicate(
+                record.normalized_content, normalized, threshold=0.90
+            ) or len(normalized) > len(record.normalized_content)
+            record.last_seen_at = now
+            record.source_mode = source_mode or record.source_mode
+            record.source_group_id = group_id or record.source_group_id
+            if should_replace:
+                record.content = candidate.text
+                record.normalized_content = normalized
+                record.category = candidate.category
+                record.chroma_id = None  # No Chroma
+        else:
+            record = MemoryFact(
+                user_id=user_id,
+                fact_key=fact_key,
+                category=candidate.category,
+                content=candidate.text,
+                normalized_content=normalized,
+                source_mode=source_mode,
+                source_group_id=group_id,
+                last_seen_at=now,
+                chroma_id=None,  # No Chroma
+            )
+            db.add(record)
+    
+    def _write_event_mysql_only(
+        self,
+        db: Session,
+        user_id: str,
+        candidate,
+        group_id: Optional[str] = None,
+        source_mode: Optional[str] = None,
+    ):
+        """Write event to MySQL only (no Chroma)."""
+        from nonebot_agent.models import MemoryEvent
+        from datetime import datetime
+        normalized = self.writer.normalize_text(candidate.text)
+        now = datetime.utcnow()
+        recent_records = db.query(MemoryEvent).filter(
+            MemoryEvent.user_id == user_id
+        ).order_by(MemoryEvent.last_seen_at.desc()).limit(8).all()
+
+        for record in recent_records:
+            same_group = record.source_group_id == group_id
+            if same_group and self.deduper.is_near_duplicate(
+                record.normalized_content, normalized, threshold=0.86
+            ):
+                record.last_seen_at = now
+                if len(normalized) > len(record.normalized_content):
+                    record.content = candidate.text
+                    record.normalized_content = normalized
+                    record.category = candidate.category
+                    record.chroma_id = None  # No Chroma
+                return
+
+        record = MemoryEvent(
+            user_id=user_id,
+            category=candidate.category,
+            content=candidate.text,
+            normalized_content=normalized,
+            source_mode=source_mode,
+            source_group_id=group_id,
+            last_seen_at=now,
+            chroma_id=None,  # No Chroma
+        )
+        db.add(record)
     
     def record_group_message(
         self,
@@ -590,6 +722,9 @@ class MemoryManager:
                 has_media=has_media, is_bot_mentioned=is_bot_mentioned,
                 media_info=media_info
             )
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
     
@@ -666,6 +801,9 @@ class MemoryManager:
                 )
             
             return conversation, short_term, long_term_context
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
     
@@ -734,6 +872,9 @@ class MemoryManager:
                 if self.structured_tables_ready:
                     self.summary_manager.refresh_summary(db, conversation_id, mode)
                 db.commit()
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
 
@@ -763,5 +904,8 @@ class MemoryManager:
                 self.summary_manager.refresh_summary(db, conversation.id, mode)
                 db.commit()
             return conversation
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()

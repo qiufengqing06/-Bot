@@ -14,6 +14,9 @@ def get_group_settings(group_id: str) -> Optional[GroupSettings]:
     db = SessionLocal()
     try:
         return db.query(GroupSettings).filter(GroupSettings.group_id == group_id).first()
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
@@ -39,6 +42,9 @@ def set_group_free_chat(group_id: str, enabled: bool, updated_by: str, probabili
         db.commit()
         db.refresh(settings)
         return settings
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 

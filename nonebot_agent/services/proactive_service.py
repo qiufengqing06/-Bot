@@ -167,6 +167,9 @@ class ProactiveMessageService:
                 eligible.append(target)
 
             return random.choice(eligible) if eligible else None
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
 
@@ -215,6 +218,9 @@ class ProactiveMessageService:
                 "long_term_context": long_term_context,
                 "topic_seed": self._pick_topic_seed(target, summary_text),
             }
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
 

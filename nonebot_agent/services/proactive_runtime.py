@@ -214,6 +214,9 @@ class ProactiveMessageService:
                     eligible = not_last
 
             return random.choice(eligible)
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
 
@@ -274,6 +277,9 @@ class ProactiveMessageService:
                 )
             elif summary_text:
                 long_term_context = f"[本群近期对话摘要:]\n- {summary_text}"
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
 

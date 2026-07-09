@@ -2,6 +2,8 @@
 Database Module
 SQLAlchemy engine and session management.
 """
+from contextlib import contextmanager
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
@@ -22,11 +24,35 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
+@contextmanager
+def session_scope():
+    """Provide a transactional scope around a series of operations.
+    
+    Usage:
+        with session_scope() as db:
+            db.query(...)
+            db.commit()
+    
+    Automatically rolls back on exception and always closes the session.
+    """
+    db = SessionLocal()
+    try:
+        yield db
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def get_db():
     """Get database session (dependency injection pattern)"""
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 

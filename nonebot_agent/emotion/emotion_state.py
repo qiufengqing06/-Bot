@@ -133,6 +133,9 @@ class EmotionManager:
             
             return state
             
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
     
@@ -214,6 +217,9 @@ class EmotionManager:
             
             return state
             
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
     
@@ -280,6 +286,9 @@ class EmotionManager:
             
             return state
             
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
     
