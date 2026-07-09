@@ -61,9 +61,15 @@ class DouyinDownloader:
         logging.info("DouyinDownloader 初始化完成")
 
     def _extract_url(self, text):
-        pattern = re.compile(r'https?://[a-zA-Z0-9\.\/_%\-\?=&]+')
+        # 匹配更广泛的URL字符集：排除空白、引号、尖括号、CJK字符
+        # 这样可以处理含 +, #, @, !, ~, *, ', (, ), ; 等特殊字符的URL
+        pattern = re.compile(r'https?://[^\s<>"\'\u4e00-\u9fff\uff00-\uffef]+')
         match = pattern.search(text)
-        return match.group(0) if match else None
+        if match:
+            # 去除末尾可能是句子标点的字符
+            url = match.group(0).rstrip('.,;:!?。，；：！？)）')
+            return url
+        return None
 
     def _sanitize_filename(self, filename):
         """清洗文件名"""
@@ -111,6 +117,131 @@ class DouyinDownloader:
             logging.warning(f"画质筛选出错 ({e})，使用默认地址")
             return video_info["play_addr"]["url_list"][0]
 
+    def _extract_from_page_html(self):
+        """
+        当 aweme/detail API 监听超时时，从页面 HTML 中的嵌入 JSON 提取视频信息。
+        尝试顺序：window.__INITIAL_STATE__ → RENDER_DATA → window._ROUTER_DATA
+        返回 (video_url, title) 或 (None, None)
+        """
+        import json
+        import urllib.parse
+
+        try:
+            html = self.page.html
+        except Exception as e:
+            logging.warning(f"获取页面HTML失败: {e}")
+            return None, None
+
+        # 尝试各种嵌入 JSON 的模式
+        patterns = [
+            # window.__INITIAL_STATE__ = {...}
+            (r'window\.__INITIAL_STATE__\s*=\s*(\{.+?\})\s*;?\s*(?:</script>|window\.)', 'INITIAL_STATE'),
+            (r'window\.__INITIAL_STATE__\s*=\s*(\{.+?\})\s*$', 'INITIAL_STATE'),
+            # RENDER_DATA (URL encoded)
+            (r'<script id="RENDER_DATA"[^>]*>([^<]+)</script>', 'RENDER_DATA'),
+            # window._ROUTER_DATA = {...}
+            (r'window\._ROUTER_DATA\s*=\s*(\{.+?\})\s*;?\s*(?:</script>|window\.)', 'ROUTER_DATA'),
+            (r'window\._ROUTER_DATA\s*=\s*(\{.+?\})\s*$', 'ROUTER_DATA'),
+        ]
+
+        for pattern, source_name in patterns:
+            try:
+                match = re.search(pattern, html, re.DOTALL)
+                if not match:
+                    continue
+
+                raw = match.group(1)
+                logging.info(f"从 {source_name} 提取到嵌入数据，尝试解析...")
+
+                # RENDER_DATA 是 URL encoded
+                if source_name == 'RENDER_DATA':
+                    try:
+                        raw = urllib.parse.unquote(raw)
+                    except Exception:
+                        continue
+
+                data = json.loads(raw)
+
+                # 递归搜索视频信息
+                video_url, title = self._find_video_in_data(data)
+                if video_url:
+                    logging.info(f"从 {source_name} 成功提取视频URL")
+                    return video_url, title
+
+            except (json.JSONDecodeError, Exception) as e:
+                logging.debug(f"解析 {source_name} 失败: {e}")
+                continue
+
+        return None, None
+
+    def _find_video_in_data(self, data, depth=0):
+        """
+        递归搜索嵌套 JSON 数据中的视频 URL 和标题。
+        返回 (video_url, title) 或 (None, None)
+        """
+        if depth > 15:
+            return None, None
+
+        if isinstance(data, dict):
+            # 检查是否是 aweme_detail 结构
+            if 'aweme_detail' in data:
+                return self._extract_from_aweme(data['aweme_detail'])
+            if 'awemeDetail' in data:
+                return self._extract_from_aweme(data['awemeDetail'])
+            # 检查是否有 video + play_addr 结构
+            if 'video' in data and isinstance(data['video'], dict):
+                video_obj = data['video']
+                play_addr = video_obj.get('play_addr') or video_obj.get('playAddr')
+                if play_addr and isinstance(play_addr, dict):
+                    url_list = play_addr.get('url_list') or play_addr.get('urlList') or []
+                    if url_list:
+                        title = data.get('desc', '') or data.get('title', '')
+                        return url_list[0], title
+            # 递归搜索子项
+            for key, value in data.items():
+                if key in ('video', 'play_addr', 'playAddr', 'url_list', 'urlList'):
+                    continue
+                result = self._find_video_in_data(value, depth + 1)
+                if result[0]:
+                    return result
+
+        elif isinstance(data, list):
+            for item in data:
+                result = self._find_video_in_data(item, depth + 1)
+                if result[0]:
+                    return result
+
+        return None, None
+
+    def _extract_from_aweme(self, aweme):
+        """从 aweme 对象提取视频URL和标题"""
+        if not isinstance(aweme, dict):
+            return None, None
+
+        title = aweme.get('desc', '') or aweme.get('title', '')
+        video_obj = aweme.get('video', {})
+        if not video_obj:
+            return None, None
+
+        # 尝试 bit_rate 列表
+        bit_rate_list = video_obj.get('bit_rate') or video_obj.get('bitRate') or []
+        if bit_rate_list:
+            for item in bit_rate_list:
+                play_addr = item.get('play_addr') or item.get('playAddr')
+                if play_addr:
+                    url_list = play_addr.get('url_list') or play_addr.get('urlList') or []
+                    if url_list:
+                        return url_list[0], title
+
+        # 直接 play_addr
+        play_addr = video_obj.get('play_addr') or video_obj.get('playAddr')
+        if play_addr:
+            url_list = play_addr.get('url_list') or play_addr.get('urlList') or []
+            if url_list:
+                return url_list[0], title
+
+        return None, None
+
     def close(self):
         try:
             self.page.quit()
@@ -142,28 +273,42 @@ class DouyinDownloader:
             res_packet = self.page.listen.wait(timeout=20)
 
             if not res_packet:
-                result["message"] = "获取数据超时或被验证码拦截"
-                return result
+                # 监听超时，尝试从页面 HTML 提取
+                logging.info("API 监听超时，尝试从页面 HTML 提取视频数据...")
+                video_url, raw_title = self._extract_from_page_html()
+                
+                if not video_url:
+                    result["message"] = "获取数据超时或被验证码拦截"
+                    return result
+                
+                # 从 HTML 提取成功，继续处理
+                safe_title = self._sanitize_filename(raw_title or f"video_{int(time.time())}")
+                file_extension = ".mp4"
+                full_filename = safe_title + file_extension
+                save_path = os.path.join(self.save_dir, full_filename)
+                
+                # 跳过 API 解析，直接到下载步骤
+                # (video_url 已设置，video_obj 不需要)
+            else:
+                # 3. 提取数据（从 API 响应）
+                json_data = res_packet.response.body
+                aweme = json_data.get("aweme_detail", {})
 
-            # 3. 提取数据
-            json_data = res_packet.response.body
-            aweme = json_data.get("aweme_detail", {})
+                # 获取标题
+                raw_title = aweme.get("desc", f"video_{int(time.time())}")
+                safe_title = self._sanitize_filename(raw_title)
+                file_extension = ".mp4"
+                full_filename = safe_title + file_extension
+                save_path = os.path.join(self.save_dir, full_filename)
 
-            # 获取标题
-            raw_title = aweme.get("desc", f"video_{int(time.time())}")
-            safe_title = self._sanitize_filename(raw_title)
-            file_extension = ".mp4"
-            full_filename = safe_title + file_extension
-            save_path = os.path.join(self.save_dir, full_filename)
+                # 4. 获取下载链接（调用新的画质选择方法）
+                video_obj = aweme.get("video", {})
+                if not video_obj:
+                    result["message"] = "未解析到视频对象(可能是图文)"
+                    return result
 
-            # 4. 获取下载链接（调用新的画质选择方法）
-            video_obj = aweme.get("video", {})
-            if not video_obj:
-                result["message"] = "未解析到视频对象(可能是图文)"
-                return result
-
-            #  - 此处调用解析函数
-            video_url = self._pick_optimal_url(video_obj)
+                #  - 此处调用解析函数
+                video_url = self._pick_optimal_url(video_obj)
 
             # 5. 检查本地是否已存在
             if os.path.exists(save_path):
