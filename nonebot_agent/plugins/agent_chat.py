@@ -17,6 +17,7 @@ Utilities are in:
 """
 import asyncio
 import random
+import uuid
 from datetime import datetime
 from typing import Optional, List, Tuple
 
@@ -46,6 +47,11 @@ from nonebot_agent.plugins.commands import basic, emotion, free_chat, draw, skil
 def get_current_timestamp() -> str:
     """Get current timestamp string for message prefix."""
     return datetime.now().strftime("[%Y-%m-%d %H:%M]")
+
+
+def generate_trace_id() -> str:
+    """Generate a short trace ID for request tracking."""
+    return uuid.uuid4().hex[:8]
 
 
 async def get_user_nickname(bot: Bot, user_id: str, group_id: str = None) -> str:
@@ -109,6 +115,9 @@ async def record_group_message(bot: Bot, event: MessageEvent):
     Record group messages to memory.
     If free chat mode is enabled, may also generate responses.
     """
+    # Generate trace ID for this request
+    trace_id = generate_trace_id()
+    
     # Only process group messages
     if not isinstance(event, GroupMessageEvent):
         return
@@ -148,11 +157,11 @@ async def record_group_message(bot: Bot, event: MessageEvent):
             )
             if image_description:
                 content += f" [发送了图片: {image_description}]"
-                logger.info(f"[Agent] Analyzed group image: {image_description[:50]}...")
+                logger.info(f"[trace:{trace_id}] [Agent] Analyzed group image: {image_description[:50]}...")
             else:
                 content += f" [图片x{len(image_urls or image_paths)}]"
         except Exception as e:
-            logger.warning(f"[Agent] Failed to analyze group image: {e}")
+            logger.warning(f"[trace:{trace_id}] [Agent] Failed to analyze group image: {e}")
             content += f" [图片x{len(image_urls or image_paths)}]"
     
     # Record to memory
@@ -166,9 +175,9 @@ async def record_group_message(bot: Bot, event: MessageEvent):
             is_bot_mentioned=False,
             nickname=nickname
         )
-        logger.debug(f"[Agent] Recorded group message from {nickname}({user_id}) in {group_id}")
+        logger.debug(f"[trace:{trace_id}] [Agent] Recorded group message from {nickname}({user_id}) in {group_id}")
     except Exception as e:
-        logger.error(f"[Agent] Failed to record group message: {e}")
+        logger.error(f"[trace:{trace_id}] [Agent] Failed to record group message: {e}")
     
     # Check if free chat mode is enabled
     free_chat_enable, reply_probability = is_free_chat_enabled(group_id)
@@ -178,10 +187,10 @@ async def record_group_message(bot: Bot, event: MessageEvent):
     
     # Roll for reply probability
     if random.randint(1, 100) > reply_probability:
-        logger.debug(f"[Agent] Free chat: skipped reply (prob={reply_probability}%)")
+        logger.debug(f"[trace:{trace_id}] [Agent] Free chat: skipped reply (prob={reply_probability}%)")
         return
     
-    logger.info(f"[Agent] Free chat mode: replying to {user_id} in {group_id}")
+    logger.info(f"[trace:{trace_id}] [Agent] Free chat mode: replying to {user_id} in {group_id}")
     
     # Generate response using agent (chat mode for free chat)
     try:
@@ -195,7 +204,8 @@ async def record_group_message(bot: Bot, event: MessageEvent):
             image_paths=image_paths,
             image_urls=image_urls,
             media_info=media_info,
-            current_user_nickname=nickname
+            current_user_nickname=nickname,
+            trace_id=trace_id
         )
 
         await response_sender.send_plan(
@@ -213,8 +223,8 @@ async def record_group_message(bot: Bot, event: MessageEvent):
                 
     except Exception as e:
         import traceback
-        logger.error(f"[Agent] Free chat error: {e}")
-        logger.error(f"[Agent] Traceback:\n{traceback.format_exc()}")
+        logger.error(f"[trace:{trace_id}] [Agent] Free chat error: {e}")
+        logger.error(f"[trace:{trace_id}] [Agent] Traceback:\n{traceback.format_exc()}")
 
 
 # ============ Agent Chat Handler ============
@@ -233,6 +243,9 @@ async def handle_agent_message(bot: Bot, event: MessageEvent):
     - Dual mode (chat/professional based on "/" prefix)
     - Multimodal messages (images)
     """
+    # Generate trace ID for this request
+    trace_id = generate_trace_id()
+    
     user_id = event.get_user_id()
     
     # Extract message content (text + images)
@@ -263,12 +276,12 @@ async def handle_agent_message(bot: Bot, event: MessageEvent):
         session_type = "group"
         group_id = str(event.group_id)
         session_key = response_sender.build_session_key(session_type, user_id, group_id)
-        logger.info(f"[Agent] Group message from {user_id} in {group_id}: {text_content[:50]}...")
+        logger.info(f"[trace:{trace_id}] [Agent] Group message from {user_id} in {group_id}: {text_content[:50]}...")
     else:
         session_type = "c2c"
         group_id = None
         session_key = response_sender.build_session_key(session_type, user_id, group_id)
-        logger.info(f"[Agent] Private message from {user_id}: {text_content[:50]}...")
+        logger.info(f"[trace:{trace_id}] [Agent] Private message from {user_id}: {text_content[:50]}...")
 
     response_sender.cancel_pending(session_key)
     
@@ -277,10 +290,10 @@ async def handle_agent_message(bot: Bot, event: MessageEvent):
     
     # Log media info
     if image_paths:
-        logger.info(f"[Agent] Message includes {len(image_paths)} image(s)")
+        logger.info(f"[trace:{trace_id}] [Agent] Message includes {len(image_paths)} image(s)")
     
     logger.info(
-        f"[Agent] Mode: {mode.value}, skill_override={skill_override}, "
+        f"[trace:{trace_id}] [Agent] Mode: {mode.value}, skill_override={skill_override}, "
         f"skill_exclusive={skill_exclusive}"
     )
     
@@ -298,6 +311,7 @@ async def handle_agent_message(bot: Bot, event: MessageEvent):
             current_user_nickname=nickname,
             skill_override=skill_override,
             skill_exclusive=skill_exclusive,
+            trace_id=trace_id
         )
 
         await response_sender.send_plan(
@@ -316,8 +330,8 @@ async def handle_agent_message(bot: Bot, event: MessageEvent):
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
-        logger.error(f"[Agent] Error handling message: {e}")
-        logger.error(f"[Agent] Full traceback:\n{error_details}")
+        logger.error(f"[trace:{trace_id}] [Agent] Error handling message: {e}")
+        logger.error(f"[trace:{trace_id}] [Agent] Full traceback:\n{error_details}")
         await agent_reply.send("抱歉，我遇到了一些问题，请稍后再试 😅")
 
 

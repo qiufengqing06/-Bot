@@ -41,8 +41,12 @@ async def generate_response(
     current_user_nickname: Optional[str] = None,
     skill_override: Optional[str] = None,
     skill_exclusive: bool = False,
+    trace_id: Optional[str] = None,
 ) -> ChatResponsePlan:
     """Generate agent responses and post-process them for novelty."""
+    # Format trace prefix for logging
+    trace_prefix = f"[trace:{trace_id}] " if trace_id else ""
+    
     conversation, short_term_messages, long_term_context = memory_manager.process_message(
         user_id=user_id,
         user_message=content,
@@ -70,7 +74,7 @@ async def generate_response(
         context_id = group_id if session_type == "group" else user_id
         emotion_state = emotion_manager.get_emotion(context_type, context_id)
         emotion_label = emotion_state.get_label().value
-        logger.info(f"[Emotion] Current state for {context_type}:{context_id}: {emotion_label}")
+        logger.info(f"{trace_prefix}[Emotion] Current state for {context_type}:{context_id}: {emotion_label}")
 
     initial_state = {
         "messages": initial_messages,
@@ -103,7 +107,7 @@ async def generate_response(
                 tool_content = msg.content
                 if STICKER_MARKER_PREFIX in tool_content and STICKER_MARKER_SUFFIX in tool_content:
                     sticker_markers.append(tool_content)
-                    logger.info(f"[Agent] Found sticker marker in tool result: {tool_content}")
+                    logger.info(f"{trace_prefix}[Agent] Found sticker marker in tool result: {tool_content}")
 
         for msg in reversed(messages):
             if hasattr(msg, "content") and msg.content and not hasattr(msg, "tool_call_id"):
@@ -128,7 +132,7 @@ async def generate_response(
             missing_markers = [marker for marker in sticker_markers if marker not in existing_stickers]
             if missing_markers:
                 response_plan = response_plan.append_stickers(missing_markers)
-                logger.info(f"[Agent] Added {len(missing_markers)} sticker marker(s) to response plan")
+                logger.info(f"{trace_prefix}[Agent] Added {len(missing_markers)} sticker marker(s) to response plan")
     else:
         response_plan = ChatResponsePlan.from_text(raw_response)
 
@@ -141,7 +145,7 @@ async def generate_response(
 
     image_description = result.get("image_description", "")
     if image_description:
-        logger.info(f"[Agent] Image description extracted: {image_description[:80]}...")
+        logger.info(f"{trace_prefix}[Agent] Image description extracted: {image_description[:80]}...")
 
     full_response = response_plan.canonical_text().strip()
     if not full_response:
@@ -175,10 +179,10 @@ async def generate_response(
                     new_state = emotion_manager.update_emotion(
                         context_type, context_id, delta_p, delta_a, delta_d
                     )
-                    logger.info(f"[Emotion] Updated emotion: {new_state.get_label().value}")
+                    logger.info(f"{trace_prefix}[Emotion] Updated emotion: {new_state.get_label().value}")
             except Exception as e:
-                logger.error(f"[Emotion] Failed to update emotion: {e}")
+                logger.error(f"{trace_prefix}[Emotion] Failed to update emotion: {e}")
     else:
-        logger.warning(f"[Agent] Skipping save for error response: {full_response[:50]}...")
+        logger.warning(f"{trace_prefix}[Agent] Skipping save for error response: {full_response[:50]}...")
 
     return response_plan
