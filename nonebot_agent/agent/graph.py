@@ -387,6 +387,11 @@ def create_agent(mode: AgentMode = AgentMode.PROFESSIONAL):
         if skill_context.skill_exclusive and skill_prompt:
             system_prompt = _build_skill_exclusive_prompt(state, skill_prompt)
         else:
+            # Extract recent user messages for anti-repetition guidance
+            recent_user_messages = [
+                msg.content for msg in state.get("messages", [])[-20:]
+                if isinstance(msg, HumanMessage) and msg.content
+            ]
             # Build system prompt with memory context, emotion, and session info
             system_prompt = get_system_prompt_with_context(
                 state.get("long_term_context", ""),
@@ -395,7 +400,8 @@ def create_agent(mode: AgentMode = AgentMode.PROFESSIONAL):
                 session_type=state.get("session_type", "c2c"),
                 group_id=state.get("group_id"),
                 current_user_nickname=state.get("current_user_nickname"),
-                current_user_id=state.get("user_id")
+                current_user_id=state.get("user_id"),
+                recent_user_messages=recent_user_messages,
             )
         if skill_prompt and not skill_context.skill_exclusive:
             system_prompt += (

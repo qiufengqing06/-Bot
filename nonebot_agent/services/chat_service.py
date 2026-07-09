@@ -67,6 +67,9 @@ async def generate_response(
     recent_assistant_messages = [
         msg.content for msg in initial_messages if isinstance(msg, AIMessage) and msg.content
     ]
+    recent_user_messages = [
+        msg.content for msg in initial_messages if isinstance(msg, HumanMessage) and msg.content
+    ]
 
     emotion_label = None
     if mode == AgentMode.CHAT and not skill_exclusive:
@@ -141,6 +144,7 @@ async def generate_response(
         recent_responses=recent_assistant_messages,
         mode=mode,
         user_message=content,
+        recent_user_messages=recent_user_messages,
     )
 
     image_description = result.get("image_description", "")

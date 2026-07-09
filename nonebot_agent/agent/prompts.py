@@ -248,6 +248,10 @@ MEMORY_CONTEXT_TEMPLATE = """
 {long_term_context}
 
 请根据以上历史记忆和当前对话，给出合适的回复。如果历史记忆与当前话题相关，可以自然地提及。
+
+## 避免重复
+如果用户问了你最近回答过的问题，可以：1）简单说'这个我说过了呀'然后给个精简版 2）换一个角度补充。
+不要只是换同义词，请改变句式结构、顺序、或者切入点。
 """
 
 # ============ 情绪风格描述 ============
@@ -348,7 +352,8 @@ def get_system_prompt_with_context(
     session_type: str = "c2c",
     group_id: str = None,
     current_user_nickname: str = None,
-    current_user_id: str = None
+    current_user_id: str = None,
+    recent_user_messages: list[str] | None = None,
 ) -> str:
     """
     Get the full system prompt with optional memory context and emotion.
@@ -401,6 +406,16 @@ def get_system_prompt_with_context(
     # Add memory context if provided
     if long_term_context:
         prompt += "\n## 相关历史对话\n" + long_term_context
+    
+    # Add anti-repetition guidance when recent user messages are available
+    if recent_user_messages:
+        prompt += (
+            "\n## 避免重复回复\n"
+            "如果用户问了你最近回答过的问题，可以：\n"
+            "1）简单说'这个我说过了呀'然后给个精简版\n"
+            "2）换一个角度补充\n"
+            "不要只是换同义词，请改变句式结构、顺序、或者切入点。\n"
+        )
     
     return prompt
 
