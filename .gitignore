@@ -1,0 +1,27 @@
+# Environment variables
+.env
+
+# Data directories (runtime-generated)
+data/chroma/
+data/images/
+data/videos/
+data/browser_data/
+data/bili_browser_data/
+
+# Python cache
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

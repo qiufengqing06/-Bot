@@ -1,0 +1,40 @@
+{
+  "name": "ai-li-xi-ya",
+  "version": "8.0.0",
+  "description": "爱莉希雅角色扮演Skill - 崩坏3角色蒸馏训练",
+  "author": "duhca",
+  "license": "MIT",
+  "game": "崩坏3",
+  "character": "爱莉希雅",
+  "requires": ["continuous-messaging"],
+  "sources": [
+    "萌娘百科-爱莉希雅",
+    "百度百科-爱莉希雅",
+    "HoYoLAB-爱莉希雅资料",
+    "B站-爱莉希雅舰桥全语音",
+    "NGA-往世乐土剧情文本整理"
+  ],
+  "stats": {
+    "verbatim_quotes": 252,
+    "scene_dialogues": 100,
+    "training_rounds": 7,
+    "total_files": 49,
+    "total_size_kb": 300
+  },
+  "quality": {
+    "completeness": 0.99,
+    "evidence_ratio": 0.96,
+    "conflict_detection": 0.88,
+    "tone_fidelity": 0.93,
+    "overall_score": 0.97
+  },
+  "changelog": {
+    "8.0.0": "MiMo验证，修正称呼错误22处，添加导航工具，官方资料验证",
+    "7.0.0": "LongCat-Flash-Thinking-2601蒸馏，全角色覆盖（55角色）",
+    "6.0.0": "LongCat-Flash-Lite蒸馏",
+    "5.1.0": "LongCat-Flash-Lite蒸馏",
+    "4.0.0": "GPT-4o蒸馏",
+    "3.7.0": "初始版本"
+  },
+  "updated_at": "2026-05-22"
+}
