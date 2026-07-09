@@ -44,20 +44,32 @@ def extract_image_params(user_input: str) -> dict:
         Dict with 'prompt' and 'size' keys
     """
     try:
+        from nonebot_agent.agent.llm_provider import get_provider
+        from openai import OpenAI
+        
         client = OpenAI(
             api_key=app_config.LLM_API_KEY,
             base_url=app_config.LLM_API_URL,
         )
         
-        response = client.chat.completions.create(
-            model=app_config.LLM_MODEL,
-            messages=[
+        # Build provider-aware parameters
+        provider = get_provider()
+        call_params = {
+            "model": app_config.LLM_MODEL,
+            "messages": [
                 {"role": "system", "content": IMAGE_PARAM_EXTRACTION_PROMPT},
                 {"role": "user", "content": user_input}
             ],
-            temperature=0.1,  # Low temperature for more consistent parsing
-            max_tokens=200
-        )
+            "temperature": 0.1,  # Low temperature for more consistent parsing
+            "max_tokens": 200
+        }
+        
+        # Add provider-specific extra_body parameters
+        extra_body = provider.build_extra_body()
+        if extra_body:
+            call_params["extra_body"] = extra_body
+        
+        response = client.chat.completions.create(**call_params)
         
         result_text = response.choices[0].message.content.strip()
         
