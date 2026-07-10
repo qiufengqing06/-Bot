@@ -72,3 +72,7 @@ build/
 Thumbs.db
 Desktop.ini
 data/skills/tian-yu-xue/SKILL.md
+AGENTS.md
+test.py
+data/skills/ai-li-xi-ya/
+data/skills/campus_chat/
