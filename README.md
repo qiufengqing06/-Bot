@@ -1,8 +1,21 @@
 # NoneBot Agent
 
+> 基于 NoneBot2 + NapCatQQ + LangGraph 的智能 QQ 机器人
+
 NoneBot Agent 是一个基于 NoneBot2、OneBot V11、LangGraph 和 OpenAI-compatible LLM API 的智能 QQ 机器人项目。它的核心目标不是只做问答，而是提供一个可长期运行、能记忆上下文、能理解图片、能调用工具、能扩展本地技能、并能在私聊和群聊中自然互动的 Agent Bot。
 
 当前代码面向 Windows + NapCatQQ 场景编写，数据层使用 MySQL 和 Chroma，模型接口使用 OpenAI 兼容协议，因此可以接入通义千问、DeepSeek、OpenAI 兼容中转、火山方舟等服务。
+
+## 致谢
+
+本项目基于以下开源项目构建：
+
+- [NoneBot2](https://github.com/nonebot/nonebot2) — 跨平台 Python 机器人框架
+- [NapCatQQ](https://github.com/NapNeko/NapCatQQ) — 现代化的 NTQQ 协议端
+- [LangGraph](https://github.com/langchain-ai/langgraph) — LLM Agent 状态机编排
+- [LangChain](https://github.com/langchain-ai/langchain) — LLM 应用开发框架
+- [ChromaDB](https://github.com/chroma-core/chroma) — 向量数据库
+- [DrissionPage](https://github.com/g1879/DrissionPage) — 浏览器自动化
 
 改进路线和后续重构建议见 [docs/improvement-roadmap.md](docs/improvement-roadmap.md)。
 
