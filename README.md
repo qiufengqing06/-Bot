@@ -454,7 +454,30 @@ python migrate_db.py
 
 `migrate_db.py` 会补齐媒体表、结构化记忆表和摘要表。对新库执行也通常是安全的。
 
-### 6. 配置 NapCatQQ
+### 6. 数据库迁移（Alembic）
+
+项目使用 Alembic 管理数据库 schema 变更：
+
+```powershell
+# 查看当前迁移状态
+alembic current
+
+# 查看迁移历史
+alembic history
+
+# 应用所有待执行的迁移
+alembic upgrade head
+
+# 生成新迁移（修改 models.py 后）
+alembic revision --autogenerate -m "描述变更内容"
+
+# 回滚到上一个版本
+alembic downgrade -1
+```
+
+迁移文件位于 `alembic/versions/` 目录，数据库连接从 `.env` 的 `DB_URL` 读取。
+
+### 7. 配置 NapCatQQ
 
 1. 启动 NapCatQQ 并登录机器人 QQ。
 2. 打开 NapCat WebUI。

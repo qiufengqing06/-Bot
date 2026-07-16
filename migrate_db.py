@@ -1,6 +1,19 @@
 """
-Database Migration Script
-Add new columns/tables for multimodal support and structured memories.
+Database Migration Script (DEPRECATED)
+
+.. deprecated::
+    This script is deprecated. Use Alembic for schema migrations instead.
+
+    Alembic provides versioned, reversible migrations that are safer and
+    easier to review. See:
+
+        alembic upgrade head      # Apply all pending migrations
+        alembic revision --autogenerate -m "description"  # Generate new migration
+        alembic current           # Show current revision
+        alembic history           # Show migration history
+
+    This script is kept only for backward compatibility with existing
+    deployments. New migrations should be created with Alembic.
 """
 from nonebot_agent.database import engine
 from sqlalchemy import text

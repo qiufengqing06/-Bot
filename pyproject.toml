@@ -21,6 +21,7 @@ dependencies = [
     # Database
     "sqlalchemy>=2.0.0",
     "pymysql>=1.0.0",
+    "alembic>=1.13.0",
     
     # Vector DB & Embeddings
     "chromadb>=0.4.0",
