@@ -1,30 +1,23 @@
-"""
-Emotion State Module
-Manages bot emotional state using simplified PAD model.
-"""
+"""Emotion State Module - Simplified single mood score."""
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Optional, Tuple, Dict
+from typing import Optional, Dict
 from enum import Enum
-
 from nonebot.log import logger
-
 from nonebot_agent.database import SessionLocal
 from nonebot_agent.models import BotEmotionState
 
 
 class EmotionLabel(Enum):
-    """Discrete emotion labels mapped from PAD values."""
-    HAPPY = "开心😊"        # High P, non-negative A
-    SAD = "低落😢"          # Low P, non-positive A  
-    IRRITATED = "烦躁😠"    # Low P, High A
-    SLEEPY = "困倦😴"       # Very low A
-    CUTE = "撒娇🤗"         # High P, High A, Low D
-    CONFIDENT = "自信😎"    # Non-negative P, Non-negative A, High D
-    CALM = "平静😌"         # Neutral state
+    HAPPY = "开心😊"
+    SAD = "低落😢"
+    IRRITATED = "烦躁😠"
+    SLEEPY = "困倦😴"
+    CUTE = "撒娇🤗"
+    CONFIDENT = "自信😎"
+    CALM = "平静😌"
 
 
-# Emotion style descriptions for each label
 EMOTION_STYLES: Dict[EmotionLabel, str] = {
     EmotionLabel.HAPPY: "话多、热情、主动延伸话题、多用积极的语气词（呢、呀、啦）",
     EmotionLabel.SAD: "话少、回复简短、偶尔叹气、语气低沉（唉、嗯...）",
@@ -38,76 +31,41 @@ EMOTION_STYLES: Dict[EmotionLabel, str] = {
 
 @dataclass
 class EmotionState:
-    """Data class for emotion state."""
-    pleasure: int = 0       # -100 ~ 100
-    arousal: int = 0        # -100 ~ 100
-    dominance: int = 0      # -100 ~ 100
+    mood: int = 0
     last_updated: datetime = None
     
     def __post_init__(self):
         if self.last_updated is None:
             self.last_updated = datetime.utcnow()
     
-    def clamp_values(self):
-        """Ensure all values are within valid range."""
-        self.pleasure = max(-100, min(100, self.pleasure))
-        self.arousal = max(-100, min(100, self.arousal))
-        self.dominance = max(-100, min(100, self.dominance))
-    
     def get_label(self) -> EmotionLabel:
-        """Map PAD values to discrete emotion label."""
-        p, a, d = self.pleasure, self.arousal, self.dominance
-        
-        # Priority order for emotion detection
-        if a <= -50:
+        hour = datetime.now().hour
+        if hour >= 23 or hour < 6:
             return EmotionLabel.SLEEPY
-        if p <= -30 and a >= 30:
-            return EmotionLabel.IRRITATED
-        if p <= -30 and a <= 0:
-            return EmotionLabel.SAD
-        if p >= 20 and a >= 20 and d <= -20:
-            return EmotionLabel.CUTE
-        if p >= 0 and a >= 0 and d >= 40:
-            return EmotionLabel.CONFIDENT
-        if p >= 30 and a >= 0:
+        if self.mood >= 40:
             return EmotionLabel.HAPPY
+        if self.mood >= 20:
+            return EmotionLabel.CONFIDENT
+        if self.mood >= 10:
+            return EmotionLabel.CUTE
+        if self.mood <= -40:
+            return EmotionLabel.IRRITATED
+        if self.mood <= -20:
+            return EmotionLabel.SAD
         return EmotionLabel.CALM
     
     def get_style_description(self) -> str:
-        """Get the speaking style for current emotion."""
         return EMOTION_STYLES[self.get_label()]
 
 
 class EmotionManager:
-    """
-    Manager for bot emotion states.
-    Handles per-user (C2C) and per-group emotions.
-    """
-    
-    # Time decay settings
-    DECAY_INTERVAL_MINUTES = 30     # Apply decay every 30 min
-    DECAY_RATE = 0.1                # Decay 10% per interval
-    RESET_AFTER_HOURS = 2           # Reset after 2 hours of inactivity
-    
-    # Night time sleepiness
+    DECAY_INTERVAL_MINUTES = 30
+    DECAY_RATE = 0.1
+    RESET_AFTER_HOURS = 2
     NIGHT_START_HOUR = 23
     NIGHT_END_HOUR = 6
     
-    def __init__(self):
-        pass
-    
     def get_emotion(self, context_type: str, context_id: str) -> EmotionState:
-        """
-        Get current emotion state for a context (user or group).
-        Applies time decay before returning.
-        
-        Args:
-            context_type: "c2c" or "group"
-            context_id: user_id or group_id
-            
-        Returns:
-            EmotionState with current values
-        """
         db = SessionLocal()
         try:
             record = db.query(BotEmotionState).filter(
@@ -116,50 +74,19 @@ class EmotionManager:
             ).first()
             
             if not record:
-                # Create new neutral state
-                state = EmotionState()
-                return self._apply_time_modifiers(state)
+                return self._apply_time_modifiers(EmotionState())
             
-            state = EmotionState(
-                pleasure=record.pleasure,
-                arousal=record.arousal,
-                dominance=record.dominance,
-                last_updated=record.last_updated
-            )
-            
-            # Apply time decay
+            mood = int(record.pleasure * 0.5 + record.arousal * 0.3 + record.dominance * 0.2)
+            state = EmotionState(mood=mood, last_updated=record.last_updated)
             state = self._apply_time_decay(state)
-            state = self._apply_time_modifiers(state)
-            
-            return state
-            
+            return self._apply_time_modifiers(state)
         except Exception:
             db.rollback()
             raise
         finally:
             db.close()
     
-    def update_emotion(
-        self, 
-        context_type: str, 
-        context_id: str,
-        delta_p: int = 0,
-        delta_a: int = 0,
-        delta_d: int = 0
-    ) -> EmotionState:
-        """
-        Update emotion state with deltas.
-        
-        Args:
-            context_type: "c2c" or "group"
-            context_id: user_id or group_id  
-            delta_p: Change in pleasure
-            delta_a: Change in arousal
-            delta_d: Change in dominance
-            
-        Returns:
-            Updated EmotionState
-        """
+    def update_emotion(self, context_type: str, context_id: str, delta_p: int = 0, delta_a: int = 0, delta_d: int = 0) -> EmotionState:
         db = SessionLocal()
         try:
             record = db.query(BotEmotionState).filter(
@@ -168,90 +95,44 @@ class EmotionManager:
             ).first()
             
             now = datetime.utcnow()
+            mood_delta = int(delta_p * 0.5 + delta_a * 0.3 + delta_d * 0.2)
             
             if record:
-                # Apply decay first, then add deltas
-                state = EmotionState(
-                    pleasure=record.pleasure,
-                    arousal=record.arousal,
-                    dominance=record.dominance,
-                    last_updated=record.last_updated
-                )
+                current_mood = int(record.pleasure * 0.5 + record.arousal * 0.3 + record.dominance * 0.2)
+                state = EmotionState(mood=current_mood, last_updated=record.last_updated)
                 state = self._apply_time_decay(state)
-                
-                record.pleasure = state.pleasure + delta_p
-                record.arousal = state.arousal + delta_a
-                record.dominance = state.dominance + delta_d
+                new_mood = max(-100, min(100, state.mood + mood_delta))
+                record.pleasure = int(new_mood * 0.6)
+                record.arousal = int(new_mood * 0.3)
+                record.dominance = int(new_mood * 0.1)
                 record.last_updated = now
-                
-                # Clamp values
-                record.pleasure = max(-100, min(100, record.pleasure))
-                record.arousal = max(-100, min(100, record.arousal))
-                record.dominance = max(-100, min(100, record.dominance))
             else:
+                new_mood = max(-100, min(100, mood_delta))
                 record = BotEmotionState(
-                    context_type=context_type,
-                    context_id=context_id,
-                    pleasure=max(-100, min(100, delta_p)),
-                    arousal=max(-100, min(100, delta_a)),
-                    dominance=max(-100, min(100, delta_d)),
-                    last_updated=now
+                    context_type=context_type, context_id=context_id,
+                    pleasure=int(new_mood * 0.6), arousal=int(new_mood * 0.3),
+                    dominance=int(new_mood * 0.1), last_updated=now
                 )
                 db.add(record)
             
             db.commit()
             db.refresh(record)
-            
-            state = EmotionState(
-                pleasure=record.pleasure,
-                arousal=record.arousal,
-                dominance=record.dominance,
-                last_updated=record.last_updated
-            )
-            
-            logger.info(
-                f"[Emotion] Updated {context_type}:{context_id} -> "
-                f"P={state.pleasure}, A={state.arousal}, D={state.dominance} "
-                f"({state.get_label().value})"
-            )
-            
+            final_mood = int(record.pleasure * 0.5 + record.arousal * 0.3 + record.dominance * 0.2)
+            state = EmotionState(mood=final_mood, last_updated=record.last_updated)
+            logger.info(f"[Emotion] Updated {context_type}:{context_id} -> mood={state.mood} ({state.get_label().value})")
             return state
-            
         except Exception:
             db.rollback()
             raise
         finally:
             db.close()
     
-    def set_emotion(
-        self,
-        context_type: str,
-        context_id: str,
-        label: EmotionLabel
-    ) -> EmotionState:
-        """
-        Set emotion to a specific label (for master control).
-        
-        Args:
-            context_type: "c2c" or "group"
-            context_id: user_id or group_id
-            label: Target emotion label
-            
-        Returns:
-            New EmotionState
-        """
-        # Map labels to PAD values
-        label_to_pad = {
-            EmotionLabel.HAPPY: (50, 30, 0),
-            EmotionLabel.SAD: (-50, -30, 0),
-            EmotionLabel.IRRITATED: (-30, 50, 0),
-            EmotionLabel.SLEEPY: (0, -70, 0),
-            EmotionLabel.CUTE: (40, 40, -40),
-            EmotionLabel.CONFIDENT: (20, 20, 60),
-            EmotionLabel.CALM: (0, 0, 0),
+    def set_emotion(self, context_type: str, context_id: str, label: EmotionLabel) -> EmotionState:
+        label_to_mood = {
+            EmotionLabel.HAPPY: 60, EmotionLabel.SAD: -50, EmotionLabel.IRRITATED: -40,
+            EmotionLabel.SLEEPY: -30, EmotionLabel.CUTE: 30, EmotionLabel.CONFIDENT: 40, EmotionLabel.CALM: 0,
         }
-        
-        p, a, d = label_to_pad.get(label, (0, 0, 0))
+        mood = label_to_mood.get(label, 0)
         
         db = SessionLocal()
         try:
@@ -261,31 +142,19 @@ class EmotionManager:
             ).first()
             
             now = datetime.utcnow()
+            p, a, d = int(mood * 0.6), int(mood * 0.3), int(mood * 0.1)
             
             if record:
-                record.pleasure = p
-                record.arousal = a
-                record.dominance = d
-                record.last_updated = now
+                record.pleasure, record.arousal, record.dominance, record.last_updated = p, a, d, now
             else:
-                record = BotEmotionState(
-                    context_type=context_type,
-                    context_id=context_id,
-                    pleasure=p,
-                    arousal=a,
-                    dominance=d,
-                    last_updated=now
-                )
-                db.add(record)
+                db.add(BotEmotionState(
+                    context_type=context_type, context_id=context_id,
+                    pleasure=p, arousal=a, dominance=d, last_updated=now
+                ))
             
             db.commit()
-            
-            state = EmotionState(pleasure=p, arousal=a, dominance=d, last_updated=now)
-            
             logger.info(f"[Emotion] Set {context_type}:{context_id} to {label.value}")
-            
-            return state
-            
+            return EmotionState(mood=mood, last_updated=now)
         except Exception:
             db.rollback()
             raise
@@ -293,38 +162,21 @@ class EmotionManager:
             db.close()
     
     def _apply_time_decay(self, state: EmotionState) -> EmotionState:
-        """Apply time-based decay to emotion values."""
         if state.last_updated is None:
             return state
-        
-        now = datetime.utcnow()
-        elapsed = now - state.last_updated
-        
-        # Reset after long inactivity
+        elapsed = datetime.utcnow() - state.last_updated
         if elapsed > timedelta(hours=self.RESET_AFTER_HOURS):
-            return EmotionState(last_updated=now)
-        
-        # Calculate decay intervals
+            return EmotionState(last_updated=datetime.utcnow())
         intervals = elapsed.total_seconds() / (self.DECAY_INTERVAL_MINUTES * 60)
-        
         if intervals >= 1:
-            decay_factor = (1 - self.DECAY_RATE) ** int(intervals)
-            state.pleasure = int(state.pleasure * decay_factor)
-            state.arousal = int(state.arousal * decay_factor)
-            state.dominance = int(state.dominance * decay_factor)
-        
+            state.mood = int(state.mood * ((1 - self.DECAY_RATE) ** int(intervals)))
         return state
     
     def _apply_time_modifiers(self, state: EmotionState) -> EmotionState:
-        """Apply time-based modifiers (e.g., night sleepiness)."""
-        current_hour = datetime.now().hour
-        
-        # Night time: decrease arousal (more sleepy)
-        if current_hour >= self.NIGHT_START_HOUR or current_hour < self.NIGHT_END_HOUR:
-            state.arousal = max(-100, state.arousal - 30)
-        
+        hour = datetime.now().hour
+        if hour >= self.NIGHT_START_HOUR or hour < self.NIGHT_END_HOUR:
+            state.mood = max(-100, state.mood - 20)
         return state
 
 
-# Global emotion manager instance
 emotion_manager = EmotionManager()
