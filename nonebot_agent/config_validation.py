@@ -1,10 +1,16 @@
-"""Startup configuration validation helpers."""
+"""Startup configuration validation helpers.
+
+Pydantic-settings handles type validation automatically. This module
+provides business-logic checks (missing required fields, conditional
+vision model requirements) and a startup report with masked secrets.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable, List
 
 from nonebot_agent.config import config as default_config
+from nonebot_agent.config import config_report
 
 
 @dataclass(frozen=True)
@@ -26,7 +32,11 @@ class RuntimeConfigError(RuntimeError):
 
 
 def validate_runtime_config(config_obj=default_config) -> List[ConfigIssue]:
-    """Validate runtime configuration without touching external services."""
+    """Validate runtime configuration without touching external services.
+
+    Type validation is handled by pydantic-settings. This function checks
+    for missing required values and conditional requirements.
+    """
     issues: List[ConfigIssue] = []
 
     _require(issues, config_obj, "LLM_MODEL", "主 LLM 模型名不能为空。")
@@ -108,6 +118,11 @@ def format_config_issues(issues: Iterable[ConfigIssue]) -> str:
         prefix = "ERROR" if issue.level == "error" else "WARN"
         lines.append(f"- [{prefix}] {issue.key}: {issue.message}")
     return "\n".join(lines)
+
+
+def get_startup_report() -> str:
+    """Return the startup configuration report with masked secrets."""
+    return config_report()
 
 
 def _require(
