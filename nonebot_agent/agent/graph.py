@@ -27,8 +27,6 @@ from nonebot_agent.agent.prompts import (
 )
 from nonebot_agent.agent.llm_provider import get_provider
 from nonebot_agent.skills import SkillContext, get_skill_registry, skill_executor
-from langchain.globals import set_llm_cache
-set_llm_cache(None)
 
 
 class AgentState(TypedDict):
