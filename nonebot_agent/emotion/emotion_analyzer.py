@@ -2,7 +2,7 @@
 Emotion Analyzer Module
 Keyword-based heuristic emotion analysis (replaces LLM).
 """
-from typing import Tuple
+from typing import Tuple, Optional
 from nonebot.log import logger
 
 
@@ -44,7 +44,7 @@ CUTE_KEYWORDS = [
 class EmotionAnalyzer:
     """Analyzes messages using keyword heuristic scanning."""
     
-    def analyze(self, message: str, sender_name: str = None) -> Tuple[int, int, int]:
+    def analyze(self, message: str, sender_name: Optional[str] = None) -> Tuple[int, int, int]:
         """
         Analyze message impact on emotion using keyword scanning.
         

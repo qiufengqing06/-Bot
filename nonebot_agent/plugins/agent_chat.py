@@ -54,7 +54,7 @@ def generate_trace_id() -> str:
     return uuid.uuid4().hex[:8]
 
 
-async def get_user_nickname(bot: Bot, user_id: str, group_id: str = None) -> str:
+async def get_user_nickname(bot: Bot, user_id: str, group_id: Optional[str] = None) -> str:
     """
     Get user's nickname (group card name preferred, otherwise QQ nickname).
     

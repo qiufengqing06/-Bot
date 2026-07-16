@@ -36,7 +36,8 @@ class MultimodalEmbeddings:
         self.api_key = api_key or config.QIANWEN_API_KEY
         
         # Set API key in environment for dashscope
-        os.environ["DASHSCOPE_API_KEY"] = self.api_key
+        if self.api_key:
+            os.environ["DASHSCOPE_API_KEY"] = self.api_key
     
     def embed_image(self, image_path: str) -> Optional[List[float]]:
         """

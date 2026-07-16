@@ -105,7 +105,10 @@ def _parse_ipv4_alias(hostname: str) -> ipaddress.IPv4Address | None:
     if not used_non_decimal:
         return None
 
-    return ipaddress.ip_address(".".join(str(part) for part in parsed_parts))
+    result = ipaddress.ip_address(".".join(str(part) for part in parsed_parts))
+    if isinstance(result, ipaddress.IPv4Address):
+        return result
+    return None
 
 
 def _ipv4_from_int(value: str, base: int) -> ipaddress.IPv4Address | None:
@@ -117,4 +120,7 @@ def _ipv4_from_int(value: str, base: int) -> ipaddress.IPv4Address | None:
     if not 0 <= parsed_value <= 0xFFFFFFFF:
         return None
 
-    return ipaddress.ip_address(parsed_value)
+    result = ipaddress.ip_address(parsed_value)
+    if isinstance(result, ipaddress.IPv4Address):
+        return result
+    return None

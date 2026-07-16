@@ -39,8 +39,9 @@ def parse_simple_yaml(text: str) -> Dict[str, object]:
             item = stripped[1:].strip().strip("'\"")
             if item:
                 data.setdefault(current_key, [])
-                if isinstance(data[current_key], list):
-                    data[current_key].append(item)
+                current_list = data[current_key]
+                if isinstance(current_list, list):
+                    current_list.append(item)
             continue
 
         if ":" not in stripped:

@@ -7,6 +7,7 @@ import random
 import uuid
 from datetime import datetime
 from enum import Enum
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -348,11 +349,11 @@ def get_chat_persona_prompt() -> str:
 def get_system_prompt_with_context(
     long_term_context: str = "",
     mode: AgentMode = AgentMode.PROFESSIONAL,
-    emotion_label: str = None,
+    emotion_label: Optional[str] = None,
     session_type: str = "c2c",
-    group_id: str = None,
-    current_user_nickname: str = None,
-    current_user_id: str = None,
+    group_id: Optional[str] = None,
+    current_user_nickname: Optional[str] = None,
+    current_user_id: Optional[str] = None,
     recent_user_messages: list[str] | None = None,
 ) -> str:
     """

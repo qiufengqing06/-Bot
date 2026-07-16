@@ -39,6 +39,8 @@ def search_from_internet(query: str) -> dict:
     }
 
     try:
+        if not url:
+            return {"error": "Search API URL not configured"}
         response = requests.post(
             url,
             json=payload,

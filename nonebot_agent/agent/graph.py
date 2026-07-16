@@ -232,7 +232,7 @@ def convert_messages_to_openai_format(
             # Attach images to the LAST HumanMessage only
             has_images = image_urls or image_paths
             if i == last_human_idx and has_images:
-                num_images = len(image_urls) if image_urls else len(image_paths)
+                num_images = len(image_urls) if image_urls is not None else (len(image_paths) if image_paths else 0)
                 logger.debug(f"[DEBUG] Attaching {num_images} images to message at index {i}")
                 # Multimodal message with images (prefer URLs)
                 openai_messages.append({
@@ -437,6 +437,7 @@ def create_agent(mode: AgentMode = AgentMode.PROFESSIONAL):
             openai_messages = convert_messages_to_openai_format(all_messages, image_paths, image_urls)
         
         # Call LLM with anti-caching and anti-repetition settings
+        image_description: Optional[str] = None
         try:
             # Build provider-specific parameters
             provider = get_provider()
@@ -563,7 +564,7 @@ def create_agent(mode: AgentMode = AgentMode.PROFESSIONAL):
         return {"messages": results}
     
     # Conditional edge: Should continue to tools or end
-    def should_continue(state: AgentState) -> Literal["tool_node", END]:
+    def should_continue(state: AgentState) -> str:
         """Determine if we should continue to tools or end."""
         messages = state["messages"]
         if not messages:

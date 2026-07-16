@@ -482,7 +482,7 @@ class ProactiveMessageService:
             recent_excerpt = self._format_recent_excerpt(recent_messages)
             recent_assistant_messages = [msg.content for msg in recent_messages if isinstance(msg, AIMessage) and msg.content]
 
-            summary = self.memory_manager.summary_manager.get_summary(db, conversation.id, AgentMode.CHAT.value)
+            summary = self.memory_manager.summary_writer.get_summary(db, conversation.id, AgentMode.CHAT.value)
             summary_text = summary.summary if summary and summary.summary else ""
 
             long_term_context = summary_text
@@ -614,9 +614,9 @@ class ProactiveMessageService:
     async def _build_plan(self, target: ProactiveTarget, context: dict[str, Any]) -> ChatResponsePlan:
         system_prompt = get_system_prompt_with_context(
             context.get("long_term_context", ""), mode=AgentMode.CHAT,
-            session_type=target.session_type, group_id=target.group_id,
-            current_user_nickname="群友们" if target.session_type == "group" else None,
-            current_user_id=None if target.session_type == "group" else target.target_id,
+            session_type=target.session_type, group_id=target.group_id or "",
+            current_user_nickname="群友们" if target.session_type == "group" else "",
+            current_user_id=None if target.session_type == "group" else (target.target_id or ""),
         )
         proactive_instructions = (
             '你现在不是在回答用户问题，而是要主动发起一轮自然聊天。\n'
@@ -641,11 +641,12 @@ class ProactiveMessageService:
 
         online_topics = context.get("online_topics") or []
         online_text = "\n".join(f"- {item}" for item in online_topics) if online_topics else "(暂无)"
+        strategy_key = context.get("topic_strategy") or "history"
         strategy_text = {
             "history": "优先沿着历史聊天和最近上下文自然开口",
             "online": "优先从联网话题里挑一个轻松开口，不要像播新闻",
             "blended": "可以把历史上下文和联网话题轻轻接在一起",
-        }.get(context.get("topic_strategy"), "优先沿着历史聊天自然开口")
+        }.get(strategy_key, "优先沿着历史聊天自然开口")
 
         user_prompt = (
             f'目标类型：{target.session_type}\n'

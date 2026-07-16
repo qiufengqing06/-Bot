@@ -153,11 +153,12 @@ def normalize_chat_response_plan(
 ) -> ChatResponsePlan:
     """Clamp bubble count and enforce primary/follow-up semantics."""
     max_messages = max(1, config.CHAT_MODE_MAX_MESSAGES)
-    max_followups = (
+    resolved_followups: int = (
         max(0, max_followups)
         if max_followups is not None
-        else max(0, getattr(config, "CHAT_MAX_FOLLOWUPS", 1))
+        else max(0, int(getattr(config, "CHAT_MAX_FOLLOWUPS", 1) or 0))
     )
+    max_followups = resolved_followups
     normalized: List[ChatBubble] = []
     text_count = 0
     sticker_seen = set()

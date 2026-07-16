@@ -4,7 +4,7 @@ Chat orchestration service.
 from __future__ import annotations
 
 import asyncio
-from typing import List, Optional
+from typing import List, Optional, Any
 
 from langchain_core.messages import AIMessage, HumanMessage
 from nonebot.log import logger
@@ -75,7 +75,7 @@ async def generate_response(
     if mode == AgentMode.CHAT and not skill_exclusive:
         context_type = "group" if session_type == "group" else "c2c"
         context_id = group_id if session_type == "group" else user_id
-        emotion_state = emotion_manager.get_emotion(context_type, context_id)
+        emotion_state = emotion_manager.get_emotion(context_type, str(context_id))
         emotion_label = emotion_state.get_label().value
         logger.info(f"{trace_prefix}[Emotion] Current state for {context_type}:{context_id}: {emotion_label}")
 
@@ -186,7 +186,7 @@ async def generate_response(
                 delta_p, delta_a, delta_d = emotion_analyzer.analyze(content)
                 if delta_p != 0 or delta_a != 0 or delta_d != 0:
                     new_state = emotion_manager.update_emotion(
-                        context_type, context_id, delta_p, delta_a, delta_d
+                        context_type, str(context_id), delta_p, delta_a, delta_d
                     )
                     logger.info(f"{trace_prefix}[Emotion] Updated emotion: {new_state.get_label().value}")
             except Exception as e:

@@ -33,7 +33,9 @@ SIZE_MAPPING = {
 def get_image_generator():
     """获取或创建 ImageGenerator 实例"""
     from nonebot_agent.utils.doubao_image_generate import ImageGenerator
-    return ImageGenerator(DOUBAO_API_URL, DOUBAO_API_KEY)
+    api_url = DOUBAO_API_URL or ""
+    api_key = DOUBAO_API_KEY or ""
+    return ImageGenerator(api_url, api_key)
 
 
 def normalize_size(size_input: str) -> str:

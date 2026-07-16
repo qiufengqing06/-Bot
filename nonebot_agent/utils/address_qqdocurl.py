@@ -4,12 +4,12 @@ Handle Bilibili share card messages and resolve the actual video URL from qqdocu
 """
 import json
 import re
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 from nonebot.log import logger
 import httpx
 
 
-async def extract_bilibili_url_from_card(card_message: str) -> Optional[Dict[str, str]]:
+async def extract_bilibili_url_from_card(card_message: str) -> Optional[Dict[str, Any]]:
     """
     从B站分享卡片消息中提取视频URL
 

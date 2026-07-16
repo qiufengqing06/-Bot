@@ -9,7 +9,7 @@ def format_memories_as_context(
     title: str,
     limit: Optional[int] = None,
     user_nickname: Optional[str] = None,
-    seen_memories: set = None,
+    seen_memories: Optional[set] = None,
     normalize_text_func = None,
     format_time_func = None,
 ) -> str:

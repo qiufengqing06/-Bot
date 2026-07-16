@@ -39,9 +39,9 @@ async def handle_emotion(bot: Bot, event: MessageEvent):
     response = f"""🎭 当前情绪状态
 
 情绪：{label.value}
-愉悦度：{emotion_state.pleasure:+d}
-激动度：{emotion_state.arousal:+d}
-支配度：{emotion_state.dominance:+d}
+愉悦度：{emotion_state.mood:+d}
+激动度：{emotion_state.mood:+d}
+支配度：{emotion_state.mood:+d}
 
 对话风格：{style}
 
@@ -132,9 +132,9 @@ async def handle_set_emotion(bot: Bot, event: MessageEvent):
     
     await set_emotion_cmd.finish(
         f"✅ 情绪已设置为：{target_label.value}\n\n"
-        f"愉悦度：{new_state.pleasure:+d}\n"
-        f"激动度：{new_state.arousal:+d}\n"
-        f"支配度：{new_state.dominance:+d}"
+        f"愉悦度：{new_state.mood:+d}\n"
+        f"激动度：{new_state.mood:+d}\n"
+        f"支配度：{new_state.mood:+d}"
     )
     
     logger.info(f"[Emotion] Master set emotion to {target_label.value} for {context_type}:{context_id}")

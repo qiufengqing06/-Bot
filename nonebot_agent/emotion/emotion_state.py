@@ -32,7 +32,7 @@ EMOTION_STYLES: Dict[EmotionLabel, str] = {
 @dataclass
 class EmotionState:
     mood: int = 0
-    last_updated: datetime = None
+    last_updated: Optional[datetime] = None
     
     def __post_init__(self):
         if self.last_updated is None:

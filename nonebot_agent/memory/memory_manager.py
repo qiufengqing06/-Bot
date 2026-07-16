@@ -34,7 +34,7 @@ class MemoryManager:
         # Initialize other dependencies
         self.writer = MemoryWriter()
         self.deduper = MemoryDeduper()
-        self.store = StructuredMemoryStore(self.chroma, self.deduper)
+        self.store = StructuredMemoryStore(self.chroma, self.deduper)  # type: ignore[arg-type]
         self.chroma_available = chroma_available
         self.summary_writer = SummaryWriter(self.writer, self.deduper, chroma_available, self.store)
         self._seen_memories = set()
@@ -372,6 +372,8 @@ class MemoryManager:
             return ""
         
         try:
+            if self.chroma is None:
+                return ""
             return self.chroma.add_memory(
                 user_id=user_id,
                 content=content,
@@ -405,7 +407,7 @@ class MemoryManager:
         has_media: bool = False,
         media_info: Optional[List[dict]] = None,
         is_bot_mentioned: bool = False,
-        nickname: str = None
+        nickname: Optional[str] = None
     ):
         """Record a group message without triggering agent response."""
         from nonebot_agent.database import SessionLocal

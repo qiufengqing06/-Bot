@@ -67,7 +67,9 @@ class ChromaMemory:
         os.makedirs(self.persist_directory, exist_ok=True)
         
         # Initialize embeddings using DashScope (Qianwen/Aliyun)
-        os.environ["DASHSCOPE_API_KEY"] = config.QIANWEN_API_KEY
+        api_key = config.QIANWEN_API_KEY
+        if api_key is not None:
+            os.environ["DASHSCOPE_API_KEY"] = api_key
         self.embeddings = DashScopeEmbeddings(
             model="text-embedding-v4",
         )
