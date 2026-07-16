@@ -1,102 +1,43 @@
-"""
-Memory Manager Module
-Unified memory management combining short-term and long-term memory.
-Enhanced with mode-based separation and unified user memory across sessions.
-"""
-from datetime import datetime
+"""Memory manager - coordinates memory operations."""
 from typing import List, Optional, Tuple
-
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
-from langchain_core.documents import Document
-from nonebot.log import logger
-from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
-
-from nonebot_agent.config import config
-from nonebot_agent.database import SessionLocal, engine
-from nonebot_agent.memory.chroma_memory import ChromaMemory
-from nonebot_agent.memory.memory_store import StructuredMemoryStore
-from nonebot_agent.memory.memory_summary import MemorySummaryManager
-from nonebot_agent.memory.memory_writer import MemoryWriter
-from nonebot_agent.models import (
-    Conversation,
-    Message,
-    MessageMedia,
-    MemoryFact,
-    MemoryEvent,
-    ConversationSummary,
-)
-
-
-def _is_missing_table_error(exc: Exception) -> bool:
-    lowered = str(exc).lower()
-    return (
-        "doesn't exist" in lowered
-        or "no such table" in lowered
-        or "undefined table" in lowered
-        or "1146" in lowered
-    )
+from nonebot.log import logger
+from nonebot_agent.models import Conversation, Message
+from nonebot_agent.memory.memory_context_formatter import format_memories_as_context, format_time_context
+from nonebot_agent.memory.memory_summary_manager import SummaryWriter
 
 
 class MemoryManager:
     """
-    Unified memory manager that handles:
-    - Short-term memory: Recent conversation messages from MySQL
-    - Long-term memory: Semantic memory from Chroma vector database
-    
-    Enhanced with:
-    - Mode-based memory separation (chat vs professional)
-    - Unified user memory across C2C and group sessions
-    - Group context aggregation from multiple users
+    Unified memory manager that coordinates:
+    - Short-term memory: Recent conversation messages
+    - Long-term memory: Semantic memory from ChromaDB
+    - Summary writing: Conversation summary extraction
     """
     
-    def __init__(self, chroma_memory: Optional[ChromaMemory] = None):
-        """
-        Initialize memory manager.
+    def __init__(self):
+        """Initialize memory manager with all dependencies."""
+        from nonebot_agent.memory.chroma_memory import ChromaMemory
+        from nonebot_agent.memory.memory_writer import MemoryWriter
+        from nonebot_agent.memory.memory_store import StructuredMemoryStore
+        from nonebot_agent.memory.memory_deduper import MemoryDeduper
         
-        Args:
-            chroma_memory: Optional ChromaMemory instance (creates one if not provided)
-        """
-        # Try to initialize Chroma; fall back to MySQL-only if it fails.
-        self.chroma_available = True
-        self._chroma_init_error: Optional[str] = None
-        if chroma_memory is not None:
-            self.chroma = chroma_memory
-        else:
-            try:
-                self.chroma = ChromaMemory()
-            except Exception as exc:
-                self.chroma = None
-                self.chroma_available = False
-                self._chroma_init_error = str(exc)
-                logger.warning(
-                    f"[Memory] ChromaDB unavailable, falling back to MySQL-only memory: {exc}"
-                )
-        self.writer = MemoryWriter()
-        # StructuredMemoryStore needs a chroma handle; pass None when degraded.
-        self.store = StructuredMemoryStore(self.chroma, self.writer)
-        self.summary_manager = MemorySummaryManager(self.writer)
-        self.short_term_size = config.SHORT_TERM_MEMORY_SIZE
-        self.group_short_term_size = config.GROUP_SHORT_TERM_MEMORY_SIZE
-        self.long_term_top_k = config.LONG_TERM_MEMORY_TOP_K
-        self.fact_top_k = config.MEMORY_FACT_TOP_K
-        self.event_top_k = config.MEMORY_EVENT_TOP_K
-        self.structured_tables_ready = self._ensure_structured_memory_tables()
-        self._seen_memories = set()  # Dedupe set for memory formatting
-
-    def _ensure_structured_memory_tables(self) -> bool:
-        """
-        Best-effort schema guard for structured memory tables.
-        Prevents runtime crashes if migrations were not executed yet.
-        """
+        # Initialize ChromaDB
         try:
-            MemoryFact.__table__.create(bind=engine, checkfirst=True)
-            MemoryEvent.__table__.create(bind=engine, checkfirst=True)
-            ConversationSummary.__table__.create(bind=engine, checkfirst=True)
-            return True
-        except Exception as exc:
-            logger.warning(f"[Memory] Unable to ensure structured memory tables: {exc}")
-            return False
+            self.chroma = ChromaMemory()
+            chroma_available = True
+        except Exception as e:
+            logger.warning(f"[Memory] ChromaDB initialization failed: {e}")
+            self.chroma = None
+            chroma_available = False
+        
+        # Initialize other dependencies
+        self.writer = MemoryWriter()
+        self.deduper = MemoryDeduper()
+        self.store = StructuredMemoryStore(self.chroma, self.deduper)
+        self.chroma_available = chroma_available
+        self.summary_writer = SummaryWriter(self.writer, self.deduper, chroma_available, self.store)
+        self._seen_memories = set()
     
     def get_or_create_conversation(
         self,
@@ -105,29 +46,15 @@ class MemoryManager:
         session_type: str,
         group_id: Optional[str] = None
     ) -> Conversation:
-        """
-        Get existing conversation or create a new one.
+        """Get existing conversation or create a new one."""
+        from nonebot_agent.models import Conversation
         
-        For groups: Use group_id as the conversation identifier
-        For C2C: Use user_id as the conversation identifier
-        
-        Args:
-            db: Database session
-            user_id: User's ID
-            session_type: 'c2c' or 'group'
-            group_id: Group ID for group messages
-            
-        Returns:
-            Conversation object
-        """
         if session_type == "group" and group_id:
-            # For group chats, one conversation per group
             query = db.query(Conversation).filter(
                 Conversation.session_type == "group",
                 Conversation.group_id == group_id
             )
         else:
-            # For C2C, one conversation per user
             query = db.query(Conversation).filter(
                 Conversation.user_id == user_id,
                 Conversation.session_type == "c2c"
@@ -136,7 +63,6 @@ class MemoryManager:
         conversation = query.first()
         
         if not conversation:
-            # Create new conversation
             conversation = Conversation(
                 user_id=user_id if session_type == "c2c" else "group",
                 session_type=session_type,
@@ -160,23 +86,10 @@ class MemoryManager:
         is_bot_mentioned: bool = True,
         media_info: Optional[List[dict]] = None
     ) -> Message:
-        """
-        Add a message to the conversation.
+        """Add a message to the conversation."""
+        from datetime import datetime
+        from nonebot_agent.models import Message, MessageMedia
         
-        Args:
-            db: Database session
-            conversation: Conversation object
-            role: 'user' or 'assistant'
-            content: Message content
-            sender_id: User ID who sent the message
-            mode: Agent mode ('chat' or 'professional')
-            has_media: Whether message contains media
-            is_bot_mentioned: Whether bot was mentioned
-            media_info: List of media metadata dicts
-            
-        Returns:
-            Message object
-        """
         message = Message(
             conversation_id=conversation.id,
             role=role,
@@ -187,9 +100,8 @@ class MemoryManager:
             is_bot_mentioned=is_bot_mentioned
         )
         db.add(message)
-        db.flush()  # Get message ID
+        db.flush()
         
-        # Add media records if present
         if media_info:
             for info in media_info:
                 media = MessageMedia(
@@ -201,9 +113,7 @@ class MemoryManager:
                 )
                 db.add(media)
         
-        # Update conversation timestamp
         conversation.updated_at = datetime.utcnow()
-        
         db.commit()
         db.refresh(message)
         
@@ -215,41 +125,27 @@ class MemoryManager:
         conversation: Conversation,
         mode: Optional[str] = None,
         limit: Optional[int] = None
-    ) -> List[BaseMessage]:
-        """
-        Get recent messages from the conversation as LangChain messages.
+    ) -> List:
+        """Get recent messages from the conversation as LangChain messages."""
+        from langchain_core.messages import HumanMessage, AIMessage
+        from nonebot_agent.config import config
+        from nonebot_agent.models import Message
         
-        Args:
-            db: Database session
-            conversation: Conversation object
-            mode: Optional mode filter
-            limit: Number of messages to retrieve
-            
-        Returns:
-            List of LangChain messages
-        """
-        limit = limit or self.short_term_size
+        limit = limit or config.SHORT_TERM_MEMORY_SIZE
         
-        # Build query
         query = db.query(Message).filter(
             Message.conversation_id == conversation.id
         )
         
-        # Filter by mode if specified
         if mode:
             query = query.filter(Message.mode == mode)
         
-        # Get recent messages
         messages = query.order_by(Message.created_at.desc()).limit(limit).all()
-        
-        # Reverse to get chronological order
         messages = list(reversed(messages))
         
-        # Convert to LangChain messages with sender info for group context
         langchain_messages = []
         for msg in messages:
             if msg.role == "user":
-                # Include sender info in group messages
                 if msg.sender_id and conversation.session_type == "group":
                     content = f"[用户{msg.sender_id[-4:]}]: {msg.content}"
                 else:
@@ -266,22 +162,13 @@ class MemoryManager:
         group_id: str,
         mode: Optional[str] = None,
         limit: Optional[int] = None
-    ) -> List[BaseMessage]:
-        """
-        Get recent messages from a specific group.
+    ) -> List:
+        """Get recent messages from a specific group."""
+        from nonebot_agent.models import Conversation
+        from nonebot_agent.config import config
         
-        Args:
-            db: Database session
-            group_id: Group ID
-            mode: Optional mode filter
-            limit: Number of messages to retrieve
-            
-        Returns:
-            List of LangChain messages
-        """
-        limit = limit or self.group_short_term_size
+        limit = limit or config.GROUP_SHORT_TERM_MEMORY_SIZE
         
-        # Find group conversation
         conversation = db.query(Conversation).filter(
             Conversation.group_id == group_id,
             Conversation.session_type == "group"
@@ -298,22 +185,13 @@ class MemoryManager:
         user_id: str,
         mode: Optional[str] = None,
         limit: Optional[int] = None
-    ) -> List[BaseMessage]:
-        """
-        Get recent messages from a user's C2C conversation.
+    ) -> List:
+        """Get recent messages from a user's C2C conversation."""
+        from nonebot_agent.models import Conversation
+        from nonebot_agent.config import config
         
-        Args:
-            db: Database session
-            user_id: User ID
-            mode: Optional mode filter
-            limit: Number of messages to retrieve
-            
-        Returns:
-            List of LangChain messages
-        """
-        limit = limit or self.short_term_size
+        limit = limit or config.SHORT_TERM_MEMORY_SIZE
         
-        # Find user's C2C conversation
         conversation = db.query(Conversation).filter(
             Conversation.user_id == user_id,
             Conversation.session_type == "c2c"
@@ -330,20 +208,11 @@ class MemoryManager:
         user_id: str,
         mode: Optional[str] = None,
         limit: int = 5
-    ) -> List[BaseMessage]:
-        """
-        Get a user's message history from all group conversations.
+    ) -> List:
+        """Get a user's message history from all group conversations."""
+        from langchain_core.messages import HumanMessage, AIMessage
+        from nonebot_agent.models import Message
         
-        Args:
-            db: Database session
-            user_id: User ID
-            mode: Optional mode filter
-            limit: Number of messages to retrieve
-            
-        Returns:
-            List of LangChain messages
-        """
-        # Query messages where this user is the sender
         query = db.query(Message).filter(
             Message.sender_id == user_id
         )
@@ -373,70 +242,50 @@ class MemoryManager:
         group_id: Optional[str] = None,
         user_nickname: Optional[str] = None,
     ) -> str:
-        """
-        Retrieve relevant long-term memories and format as context.
+        """Retrieve relevant long-term memories and format as context."""
+        from nonebot_agent.config import config
         
-        Args:
-            user_id: User's ID
-            query: Current query to search relevant memories
-            mode: Optional mode filter
-            k: Number of memories to retrieve
-            user_nickname: Optional user nickname for personalized header
-            
-        Returns:
-            Formatted context string
-        """
-        # Clear dedupe set for this context retrieval
         self._seen_memories.clear()
-        
         sections = []
 
-        summary = self.summary_manager.get_summary(db, conversation.id, mode or "professional")
+        summary = self.summary_writer.writer.get_summary(db, conversation.id, mode or "professional")
         if summary and summary.summary:
             sections.append(f"[近期会话摘要:]\n- {summary.summary}")
 
-        # Skip Chroma-based retrieval if Chroma is unavailable
         if not self.chroma_available:
             return "\n".join(sections)
 
-        # Check for memory recall trigger
         is_recall_query = self.writer.detect_memory_recall_trigger(query)
-        fact_limit = self.fact_top_k * 2 if is_recall_query else self.fact_top_k
-        event_limit = self.event_top_k * 2 if is_recall_query else self.event_top_k
+        fact_limit = config.MEMORY_FACT_TOP_K * 2 if is_recall_query else config.MEMORY_FACT_TOP_K
+        event_limit = config.MEMORY_EVENT_TOP_K * 2 if is_recall_query else config.MEMORY_EVENT_TOP_K
 
         try:
-            facts = self.store.search_facts(
-                user_id,
-                query,
-                fact_limit,
-                source_mode=mode,
-            )
-            facts_text = self._format_memories_as_context(
+            facts = self.store.search_facts(user_id, query, fact_limit, source_mode=mode)
+            facts_text = format_memories_as_context(
                 facts,
                 "[相关用户事实:]",
                 limit=fact_limit,
                 user_nickname=user_nickname,
+                seen_memories=self._seen_memories,
+                normalize_text_func=self.writer.normalize_text,
+                format_time_func=format_time_context,
             )
             if facts_text:
                 sections.append(facts_text)
 
-            events = self.store.search_events(
-                user_id,
-                query,
-                event_limit,
-                group_id=group_id,
-                source_mode=mode,
-            )
-            events_text = self._format_memories_as_context(
+            events = self.store.search_events(user_id, query, event_limit, group_id=group_id, source_mode=mode)
+            events_text = format_memories_as_context(
                 events,
                 "[相关用户经历与近况:]",
                 limit=event_limit,
                 user_nickname=user_nickname,
+                seen_memories=self._seen_memories,
+                normalize_text_func=self.writer.normalize_text,
+                format_time_func=format_time_context,
             )
             if events_text:
                 sections.append(events_text)
                 
-            # Add special context for memory recall queries
             if is_recall_query and (facts_text or events_text):
                 recall_prefix = "用户正在问你关于他们自己的记忆。请自然地回忆和提及你记得的关于他们的事情，像是朋友间的聊天一样。\n\n"
                 sections.insert(0, recall_prefix)
@@ -456,70 +305,50 @@ class MemoryManager:
         mode: Optional[str] = None,
         user_nickname: Optional[str] = None,
     ) -> str:
-        """
-        Retrieve relevant long-term memories for a group and format as context.
+        """Retrieve relevant long-term memories for a group and format as context."""
+        from nonebot_agent.config import config
         
-        Args:
-            group_id: Group's ID
-            query: Current query to search relevant memories
-            mode: Optional mode filter
-            k: Number of memories to retrieve
-            user_nickname: Optional user nickname for personalized header
-            
-        Returns:
-            Formatted context string
-        """
-        # Clear dedupe set for this context retrieval
         self._seen_memories.clear()
-        
         sections = []
 
-        summary = self.summary_manager.get_summary(db, conversation.id, mode or "professional")
+        summary = self.summary_writer.writer.get_summary(db, conversation.id, mode or "professional")
         if summary and summary.summary:
             sections.append(f"[本群近期对话摘要:]\n- {summary.summary}")
 
-        # Skip Chroma-based retrieval if Chroma is unavailable
         if not self.chroma_available:
             return "\n".join(sections)
 
-        # Check for memory recall trigger
         is_recall_query = self.writer.detect_memory_recall_trigger(query)
-        fact_limit = self.fact_top_k * 2 if is_recall_query else self.fact_top_k
-        event_limit = self.event_top_k * 2 if is_recall_query else self.event_top_k
+        fact_limit = config.MEMORY_FACT_TOP_K * 2 if is_recall_query else config.MEMORY_FACT_TOP_K
+        event_limit = config.MEMORY_EVENT_TOP_K * 2 if is_recall_query else config.MEMORY_EVENT_TOP_K
 
         try:
-            facts = self.store.search_facts(
-                user_id,
-                query,
-                fact_limit,
-                source_mode=mode,
-            )
-            facts_text = self._format_memories_as_context(
+            facts = self.store.search_facts(user_id, query, fact_limit, source_mode=mode)
+            facts_text = format_memories_as_context(
                 facts,
                 "[当前用户相关事实:]",
                 limit=fact_limit,
                 user_nickname=user_nickname,
+                seen_memories=self._seen_memories,
+                normalize_text_func=self.writer.normalize_text,
+                format_time_func=format_time_context,
             )
             if facts_text:
                 sections.append(facts_text)
 
-            events = self.store.search_events(
-                user_id,
-                query,
-                event_limit,
-                group_id=group_id,
-                source_mode=mode,
-            )
-            events_text = self._format_memories_as_context(
+            events = self.store.search_events(user_id, query, event_limit, group_id=group_id, source_mode=mode)
+            events_text = format_memories_as_context(
                 events,
                 "[当前用户在本群相关经历:]",
                 limit=event_limit,
                 user_nickname=user_nickname,
+                seen_memories=self._seen_memories,
+                normalize_text_func=self.writer.normalize_text,
+                format_time_func=format_time_context,
             )
             if events_text:
                 sections.append(events_text)
                 
-            # Add special context for memory recall queries
             if is_recall_query and (facts_text or events_text):
                 recall_prefix = "用户正在问你关于他们自己的记忆。请自然地回忆和提及你记得的关于他们的事情，像是朋友间的聊天一样。\n\n"
                 sections.insert(0, recall_prefix)
@@ -528,136 +357,6 @@ class MemoryManager:
             logger.warning(f"[Memory] Chroma search failed in get_group_long_term_context: {exc}")
 
         return "\n".join(sections)
-
-    def _sanitize_memory_content(self, content: str) -> str:
-        """Strip legacy answer-heavy phrasing so retrieval favors facts, not wording."""
-        cleaned = content.strip()
-        if cleaned.startswith("用户问:") and "回复:" in cleaned:
-            cleaned = cleaned.split("回复:", 1)[0]
-            cleaned = cleaned.replace("用户问:", "用户曾提到:", 1).strip()
-        return cleaned
-
-    def _format_memories_as_context(
-        self,
-        memories: List[Document],
-        title: str,
-        limit: Optional[int] = None,
-        user_nickname: Optional[str] = None,
-    ) -> str:
-        """
-        Format retrieved memories with structured sections and time context.
-        
-        Groups memories by category, adds time context for older memories,
-        and provides usage guidance for natural reference.
-        """
-        if not memories:
-            return ""
-
-        # Group memories by category
-        categorized = {}
-        for mem in memories:
-            category = mem.metadata.get("category", "其他")
-            if category not in categorized:
-                categorized[category] = []
-            
-            cleaned = self._sanitize_memory_content(mem.page_content)
-            normalized = self.writer.normalize_text(cleaned)
-            if not cleaned or normalized in self._seen_memories:
-                continue
-            self._seen_memories.add(normalized)
-            
-            # Add time context
-            timestamp = mem.metadata.get("timestamp", "")
-            time_context = self._format_time_context(timestamp)
-            
-            categorized[category].append((cleaned, time_context))
-
-        if not categorized:
-            return ""
-
-        # Build structured output
-        context_parts = []
-        
-        # Header with user nickname
-        if user_nickname:
-            context_parts.append(f"## 关于{user_nickname}的记忆")
-        else:
-            context_parts.append(title)
-
-        # Category sections
-        category_names = {
-            "profile": "基本身份",
-            "preference": "偏好习惯",
-            "status": "近况动态",
-            "event": "经历事件",
-        }
-
-        for category, items in categorized.items():
-            if not items:
-                continue
-            
-            section_name = category_names.get(category, category)
-            context_parts.append(f"\n### {section_name}")
-            
-            for content, time_context in items[:limit or len(items)]:
-                if time_context:
-                    context_parts.append(f"- {content}{time_context}")
-                else:
-                    context_parts.append(f"- {content}")
-
-        # Usage guidance
-        if user_nickname:
-            context_parts.append(f"\n以上是对{user_nickname}的记忆。在回复中自然地引用这些信息，但不要说'根据我的记忆'之类的机械表达。")
-        else:
-            context_parts.append("\n以上是关于用户的记忆。在回复中自然地引用这些信息，但不要说'根据我的记忆'之类的机械表达。")
-
-        return "\n".join(context_parts)
-
-    def _format_time_context(self, timestamp: str) -> str:
-        """Format timestamp as relative time context like '（3天前）'."""
-        if not timestamp or timestamp == "Unknown time":
-            return ""
-        
-        try:
-            # Try to parse timestamp
-            from datetime import datetime
-            if isinstance(timestamp, str):
-                # Try common formats
-                for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"]:
-                    try:
-                        mem_time = datetime.strptime(timestamp, fmt)
-                        break
-                    except ValueError:
-                        continue
-                else:
-                    return ""
-            else:
-                return ""
-            
-            # Calculate time difference
-            now = datetime.utcnow()
-            delta = now - mem_time
-            
-            if delta.days == 0:
-                if delta.seconds < 3600:
-                    return "（刚才）"
-                else:
-                    return "（今天）"
-            elif delta.days == 1:
-                return "（昨天）"
-            elif delta.days < 7:
-                return f"（{delta.days}天前）"
-            elif delta.days < 30:
-                weeks = delta.days // 7
-                return f"（{weeks}周前）"
-            elif delta.days < 365:
-                months = delta.days // 30
-                return f"（{months}个月前）"
-            else:
-                years = delta.days // 365
-                return f"（{years}年前）"
-        except Exception:
-            return ""
     
     def save_to_long_term(
         self,
@@ -667,19 +366,7 @@ class MemoryManager:
         group_id: Optional[str] = None,
         category: str = "conversation"
     ) -> str:
-        """
-        Save important information to long-term memory.
-        
-        Args:
-            user_id: User's ID
-            content: Content to save
-            mode: Agent mode
-            group_id: Optional group ID
-            category: Category of the memory
-            
-        Returns:
-            Memory ID
-        """
+        """Save important information to long-term memory."""
         if not self.chroma_available:
             logger.debug("[Memory] Chroma unavailable, skipping long-term save")
             return ""
@@ -705,137 +392,10 @@ class MemoryManager:
         mode: str = "professional",
         group_id: Optional[str] = None
     ) -> str:
-        """
-        Save a conversation exchange to long-term memory.
-        
-        Args:
-            user_id: User's ID
-            user_message: User's message
-            assistant_response: Assistant's response
-            mode: Agent mode
-            group_id: Optional group ID
-            
-        Returns:
-            Memory ID
-        """
-        if not self.structured_tables_ready:
-            return ""
-
-        candidates = self.writer.build_candidates(user_message)
-        if not candidates:
-            return ""
-
-        try:
-            # If Chroma is unavailable, only write to MySQL (skip vector embeddings)
-            if not self.chroma_available:
-                for candidate in candidates:
-                    if candidate.memory_type == "fact":
-                        self._write_fact_mysql_only(db, user_id, candidate, group_id=group_id, source_mode=mode)
-                    else:
-                        self._write_event_mysql_only(db, user_id, candidate, group_id=group_id, source_mode=mode)
-            else:
-                self.store.write_candidates(
-                    db=db,
-                    user_id=user_id,
-                    candidates=candidates,
-                    group_id=group_id,
-                    source_mode=mode,
-                )
-        except (ProgrammingError, OperationalError) as exc:
-            if _is_missing_table_error(exc):
-                db.rollback()
-                self.structured_tables_ready = False
-                logger.warning("[Memory] Structured memory tables missing, skip writing structured memory this run")
-                return ""
-            raise
-        return ",".join(candidate.text for candidate in candidates)
-    
-    def _write_fact_mysql_only(
-        self,
-        db: Session,
-        user_id: str,
-        candidate,
-        group_id: Optional[str] = None,
-        source_mode: Optional[str] = None,
-    ):
-        """Write fact to MySQL only (no Chroma)."""
-        from nonebot_agent.models import MemoryFact
-        from datetime import datetime
-        normalized = self.writer.normalize_text(candidate.text)
-        now = datetime.utcnow()
-        fact_key = candidate.slot_key or candidate.category
-        record = db.query(MemoryFact).filter(
-            MemoryFact.user_id == user_id,
-            MemoryFact.fact_key == fact_key,
-        ).first()
-
-        if record:
-            should_replace = not self.deduper.is_near_duplicate(
-                record.normalized_content, normalized, threshold=0.90
-            ) or len(normalized) > len(record.normalized_content)
-            record.last_seen_at = now
-            record.source_mode = source_mode or record.source_mode
-            record.source_group_id = group_id or record.source_group_id
-            if should_replace:
-                record.content = candidate.text
-                record.normalized_content = normalized
-                record.category = candidate.category
-                record.chroma_id = None  # No Chroma
-        else:
-            record = MemoryFact(
-                user_id=user_id,
-                fact_key=fact_key,
-                category=candidate.category,
-                content=candidate.text,
-                normalized_content=normalized,
-                source_mode=source_mode,
-                source_group_id=group_id,
-                last_seen_at=now,
-                chroma_id=None,  # No Chroma
-            )
-            db.add(record)
-    
-    def _write_event_mysql_only(
-        self,
-        db: Session,
-        user_id: str,
-        candidate,
-        group_id: Optional[str] = None,
-        source_mode: Optional[str] = None,
-    ):
-        """Write event to MySQL only (no Chroma)."""
-        from nonebot_agent.models import MemoryEvent
-        from datetime import datetime
-        normalized = self.writer.normalize_text(candidate.text)
-        now = datetime.utcnow()
-        recent_records = db.query(MemoryEvent).filter(
-            MemoryEvent.user_id == user_id
-        ).order_by(MemoryEvent.last_seen_at.desc()).limit(8).all()
-
-        for record in recent_records:
-            same_group = record.source_group_id == group_id
-            if same_group and self.deduper.is_near_duplicate(
-                record.normalized_content, normalized, threshold=0.86
-            ):
-                record.last_seen_at = now
-                if len(normalized) > len(record.normalized_content):
-                    record.content = candidate.text
-                    record.normalized_content = normalized
-                    record.category = candidate.category
-                    record.chroma_id = None  # No Chroma
-                return
-
-        record = MemoryEvent(
-            user_id=user_id,
-            category=candidate.category,
-            content=candidate.text,
-            normalized_content=normalized,
-            source_mode=source_mode,
-            source_group_id=group_id,
-            last_seen_at=now,
-            chroma_id=None,  # No Chroma
+        """Save a conversation exchange to long-term memory."""
+        return self.summary_writer.save_conversation_summary(
+            db, user_id, user_message, assistant_response, mode, group_id
         )
-        db.add(record)
     
     def record_group_message(
         self,
@@ -847,27 +407,12 @@ class MemoryManager:
         is_bot_mentioned: bool = False,
         nickname: str = None
     ):
-        """
-        Record a group message without triggering agent response.
-        Used to track group chat context even when bot is not mentioned.
+        """Record a group message without triggering agent response."""
+        from nonebot_agent.database import SessionLocal
         
-        Args:
-            user_id: User's ID
-            group_id: Group ID
-            content: Message content (already includes nickname in format)
-            has_media: Whether message contains media
-            media_info: List of media metadata
-            is_bot_mentioned: Whether bot was mentioned
-            nickname: User's nickname (for logging/future use)
-        """
         db = SessionLocal()
         try:
-            # Get or create group conversation
-            conversation = self.get_or_create_conversation(
-                db, user_id, "group", group_id
-            )
-            
-            # Add message to database (mode=chat for group context messages)
+            conversation = self.get_or_create_conversation(db, user_id, "group", group_id)
             self.add_message(
                 db, conversation, "user", content,
                 sender_id=user_id, mode="chat",
@@ -889,37 +434,15 @@ class MemoryManager:
         mode: str = "professional",
         has_media: bool = False,
         media_info: Optional[List[dict]] = None
-    ) -> Tuple[Conversation, List[BaseMessage], str]:
-        """
-        Process an incoming message and prepare context.
+    ) -> Tuple[Conversation, List, str]:
+        """Process an incoming message and prepare context."""
+        from nonebot_agent.database import SessionLocal
+        from nonebot_agent.config import config
         
-        For group messages:
-        - Gets group's recent messages (all users)
-        - Also retrieves user's personal history (C2C + group)
-        
-        For C2C messages:
-        - Gets user's recent messages
-        
-        Args:
-            user_id: User's ID
-            user_message: The user's message
-            session_type: 'c2c' or 'group'
-            group_id: Group ID for group messages
-            mode: Agent mode
-            has_media: Whether message contains media
-            media_info: List of media metadata
-            
-        Returns:
-            Tuple of (conversation, short_term_messages, long_term_context)
-        """
         db = SessionLocal()
         try:
-            # Get or create conversation
-            conversation = self.get_or_create_conversation(
-                db, user_id, session_type, group_id
-            )
+            conversation = self.get_or_create_conversation(db, user_id, session_type, group_id)
             
-            # Add user message to database
             self.add_message(
                 db, conversation, "user", user_message,
                 sender_id=user_id, mode=mode,
@@ -927,27 +450,19 @@ class MemoryManager:
                 media_info=media_info
             )
             
-            # Get short-term memory based on session type
             if session_type == "group" and group_id:
-                # For groups: only get group messages (not C2C messages)
                 short_term = self.get_short_term_memory(
                     db, conversation, mode=mode, 
-                    limit=self.group_short_term_size
+                    limit=config.GROUP_SHORT_TERM_MEMORY_SIZE
                 )
             else:
-                # For C2C: just user's messages
-                short_term = self.get_short_term_memory(
-                    db, conversation, mode=mode
-                )
+                short_term = self.get_short_term_memory(db, conversation, mode=mode)
             
-            # Get long-term context (mode-filtered, group-separated for group chats)
             if session_type == "group" and group_id:
-                # For groups: search only by group_id, not user_id
                 long_term_context = self.get_group_long_term_context(
                     db, conversation, user_id, group_id, user_message, mode=mode
                 )
             else:
-                # For C2C: search by user_id
                 long_term_context = self.get_long_term_context(
                     db, conversation, user_id, user_message, mode=mode
                 )
@@ -970,20 +485,10 @@ class MemoryManager:
         has_media: bool = False,
         image_description: str = ""
     ):
-        """
-        Save assistant response to both MySQL and long-term memory.
-        Also updates the user message with image description if available.
+        """Save assistant response to both MySQL and long-term memory."""
+        from nonebot_agent.database import SessionLocal
+        from nonebot_agent.models import Conversation, Message
         
-        Args:
-            conversation_id: Conversation ID
-            user_id: User's ID
-            user_message: Original user message (may include image description)
-            response: Assistant's response
-            mode: Agent mode
-            group_id: Optional group ID
-            has_media: Whether the user message had media
-            image_description: Description of image(s) from vision model
-        """
         db = SessionLocal()
         try:
             conversation = db.query(Conversation).filter(
@@ -991,9 +496,7 @@ class MemoryManager:
             ).first()
             
             if conversation:
-                # If there's an image description, update the last user message in MySQL
                 if image_description and has_media:
-                    # Find the most recent user message in this conversation
                     last_user_msg = db.query(Message).filter(
                         Message.conversation_id == conversation_id,
                         Message.role == "user",
@@ -1001,28 +504,25 @@ class MemoryManager:
                     ).order_by(Message.created_at.desc()).first()
                     
                     if last_user_msg:
-                        # Update the content to include image description
                         original_content = last_user_msg.content
                         updated_content = f"[用户发送了图片: {image_description}] {original_content}".strip()
                         last_user_msg.content = updated_content
                         db.flush()
                         logger.info("[Memory] Updated user message with image description")
                 
-                # Save assistant response to MySQL
                 self.add_message(
                     db, conversation, "assistant", response,
                     sender_id=None, mode=mode,
                     has_media=False, is_bot_mentioned=True
                 )
                 
-                # Save user-centric memory instead of whole Q/A pairs.
-                # This avoids retrieving old assistant wording and causing repeated replies.
                 self.save_conversation_summary(
                     db, user_id, user_message, response,
                     mode=mode, group_id=group_id
                 )
-                if self.structured_tables_ready:
-                    self.summary_manager.refresh_summary(db, conversation_id, mode)
+                
+                if self.summary_writer.writer.structured_tables_ready:
+                    self.summary_writer.writer.summary_manager.refresh_summary(db, conversation_id, mode)
                 db.commit()
         except Exception:
             db.rollback()
@@ -1039,21 +539,18 @@ class MemoryManager:
         mode: str = "chat",
     ) -> Optional[Conversation]:
         """Persist a bot-initiated assistant message without requiring a user turn."""
+        from nonebot_agent.database import SessionLocal
+        
         db = SessionLocal()
         try:
             conversation = self.get_or_create_conversation(db, user_id, session_type, group_id)
             self.add_message(
-                db,
-                conversation,
-                "assistant",
-                content,
-                sender_id=None,
-                mode=mode,
-                has_media=False,
-                is_bot_mentioned=False,
+                db, conversation, "assistant", content,
+                sender_id=None, mode=mode,
+                has_media=False, is_bot_mentioned=False,
             )
-            if self.structured_tables_ready:
-                self.summary_manager.refresh_summary(db, conversation.id, mode)
+            if self.summary_writer.writer.structured_tables_ready:
+                self.summary_writer.writer.summary_manager.refresh_summary(db, conversation.id, mode)
                 db.commit()
             return conversation
         except Exception:
