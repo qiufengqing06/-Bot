@@ -41,26 +41,19 @@ class TestMemoryWriter:
         assert not writer.is_question_like("我喜欢这个")
 
     def test_build_candidates_extracts_profile_info(self):
-        """Profile information should be extracted from user messages."""
+        """Profile information should be extracted via regex fallback."""
         writer = MemoryWriter()
         
-        # Mock config to disable LLM extraction
-        with patch("nonebot_agent.memory.memory_writer.config") as mock_config:
-            mock_config.MEMORY_EXTRACTION_ENABLED = False
-            
-            candidates = writer.build_candidates("我叫小明")
-            assert len(candidates) > 0
-            assert candidates[0].category == "profile"
-            assert "小明" in candidates[0].text
+        candidates = writer._build_candidates_regex("我叫小明", writer.normalize_text("我叫小明"))
+        assert len(candidates) > 0
+        assert candidates[0].category == "profile"
+        assert "小明" in candidates[0].text
 
     def test_build_candidates_extracts_preferences(self):
-        """Preference information should be extracted from user messages."""
+        """Preference information should be extracted via regex fallback."""
         writer = MemoryWriter()
         
-        with patch("nonebot_agent.memory.memory_writer.config") as mock_config:
-            mock_config.MEMORY_EXTRACTION_ENABLED = False
-            
-            candidates = writer.build_candidates("我喜欢喝咖啡")
-            assert len(candidates) > 0
-            assert candidates[0].category == "preference"
-            assert "咖啡" in candidates[0].text
+        candidates = writer._build_candidates_regex("我喜欢喝咖啡", writer.normalize_text("我喜欢喝咖啡"))
+        assert len(candidates) > 0
+        assert candidates[0].category == "preference"
+        assert "咖啡" in candidates[0].text

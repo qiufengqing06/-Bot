@@ -63,8 +63,10 @@ def mock_config():
     """Mock configuration object."""
     config = MagicMock()
     config.LLM_MODEL = "test-model"
-    config.LLM_API_KEY=***    config.LLM_API_URL = "https://api.test.com"
-    config.QIANWEN_API_KEY=***    config.DB_URL = "mysql://test"
+    config.LLM_API_KEY = "test-key"
+    config.LLM_API_URL = "https://api.test.com"
+    config.QIANWEN_API_KEY = "test-qianwen-key"
+    config.DB_URL = "mysql://test"
     config.CHAT_MODE_MAX_MESSAGES = 5
     config.CHAT_MAX_FOLLOWUPS = 1
     config.MEMORY_EXTRACTION_ENABLED = False

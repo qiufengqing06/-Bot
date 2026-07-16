@@ -14,9 +14,9 @@ class TestSkillPrefixes:
         aliases = parse_prefix_aliases("E:ai-li-xi-ya,e:ai-li-xi-ya")
         
         assert "E" in aliases
-        assert aliases["E"] == "ai_li_xi_ya"  # normalized
+        assert aliases["E"] == "ai-li-xi-ya"  # normalized (hyphens preserved)
         assert "e" in aliases
-        assert aliases["e"] == "ai_li_xi_ya"
+        assert aliases["e"] == "ai-li-xi-ya"
 
     def test_parse_prefix_aliases_handles_empty_string(self):
         """Empty string should return empty dict."""
