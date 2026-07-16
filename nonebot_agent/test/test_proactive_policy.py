@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 import unittest
 
-from nonebot_agent.services.proactive_policy import (
+from nonebot_agent.services.proactive_service import (
     choose_topic_strategy,
     clean_online_topic_text,
     format_online_topic_candidate,

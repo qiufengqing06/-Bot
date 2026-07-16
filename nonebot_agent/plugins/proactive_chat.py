@@ -8,7 +8,7 @@ import nonebot
 from nonebot import get_driver
 from nonebot.adapters.onebot.v11 import Bot
 
-from nonebot_agent.services.proactive_runtime import proactive_service
+from nonebot_agent.services.proactive_service import proactive_service
 
 try:
     from nonebot.log import logger

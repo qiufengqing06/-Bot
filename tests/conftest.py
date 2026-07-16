@@ -17,7 +17,7 @@ def mock_openai_client():
     mock_response = MagicMock()
     mock_choice = MagicMock()
     mock_message = MagicMock()
-    mock_message.content = '{"reply_mode": "single", "bubbles": [{"kind": "text", "content": "测试回复"}]}'
+    mock_message.content = '{}'.format('{"reply_mode": "single", "bubbles": [{"kind": "text", "content": "test"}]}')
     mock_choice.message = mock_message
     mock_response.choices = [mock_choice]
     
@@ -51,7 +51,7 @@ def sample_chat_response_plan():
     ) -> ChatResponsePlan:
         if bubbles is None:
             bubbles = [
-                ChatBubble(kind="text", content="测试消息", role="primary", optional=False)
+                ChatBubble(kind="text", content="test message", role="primary", optional=False)
             ]
         return ChatResponsePlan(reply_mode=reply_mode, bubbles=bubbles)
     
@@ -63,10 +63,8 @@ def mock_config():
     """Mock configuration object."""
     config = MagicMock()
     config.LLM_MODEL = "test-model"
-    config.LLM_API_KEY = "test-key"
-    config.LLM_API_URL = "https://api.test.com"
-    config.QIANWEN_API_KEY = "test-qianwen-key"
-    config.DB_URL = "mysql://test"
+    config.LLM_API_KEY=***    config.LLM_API_URL = "https://api.test.com"
+    config.QIANWEN_API_KEY=***    config.DB_URL = "mysql://test"
     config.CHAT_MODE_MAX_MESSAGES = 5
     config.CHAT_MAX_FOLLOWUPS = 1
     config.MEMORY_EXTRACTION_ENABLED = False
